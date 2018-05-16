@@ -2,26 +2,77 @@ pico-8 cartridge // http://www.pico-8.com
 version 16
 __lua__
 
+--[[
+
+platform channels:
+	1:	level bounds
+	2:	commander
+]]
+
 -- convenient no-op function that does nothing
 function noop() end
 
-local level_min_x=10
-local level_max_x=118
-local level_min_y=10
-local level_max_y=118
+local level_bounds={
+	top={x=0,y=20,vx=0,vy=0,width=128,height=0,platform_channel=1},
+	left={x=1,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1},
+	bottom={x=0,y=108,vx=0,vy=0,width=128,height=0,platform_channel=1},
+	right={x=127,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1}
+}
 
 local entities
 local buttons={}
 local button_presses={}
 
-local entity_classes={}
+local entity_classes={
+	commander={
+		width=4,
+		height=15,
+		collision_indent=1,
+		move_y=0,
+		platform_channel=2,
+		update=function(self)
+			-- move vertically
+			self.move_y=ternary(btn(3,self.player_num),1,0)-ternary(btn(2,self.player_num),1,0)
+			self.vy=2*self.move_y
+			self:apply_velocity()
+			-- keep in bounds
+			self.y=mid(level_bounds.top.y,self.y,level_bounds.bottom.y-self.height)
+		end
+	},
+	ball={
+		width=4,
+		height=4,
+		collision_indent=1,
+		vx=1,
+		vy=1,
+		collision_channel=1 + 2, -- level bounds + commanders
+		update=function(self)
+			self:apply_velocity(true)
+		end,
+		on_collide=function(self,dir,other)
+			if other.class_name!="commander" or (other.x<64 and dir=="left") or (other.x>64 and dir=="right") then
+				self:handle_collision_position(dir,other)
+				-- bounce!
+				if (dir=="left" and self.vx<0) or (dir=="right" and self.vx>0) then
+					self.vx*=-1
+				elseif (dir=="up" and self.vy<0) or (dir=="down" and self.vy>0) then
+					self.vy*=-1
+				end
+			end
+		end
+	}
+}
 
 function _init()
 	entities={}
+	spawn_entity("commander",level_bounds.left.x+5,60,{player_num=1})
+	spawn_entity("commander",level_bounds.right.x-5-entity_classes.commander.width,60,{player_num=0})
+	spawn_entity("ball",50,50)
 end
 
 -- local skip_frames=0
-function _update()
+-- local was_paused=false
+function _update(is_paused)
 	-- skip_frames+=1
 	-- if skip_frames%10>0 and not btn(5) then return end
 	-- keep track of button presses
@@ -54,12 +105,16 @@ function _update()
 	end
 end
 
+-- local was_paused=false
+-- function _paused()
+-- end
+
 function _draw()
 	camera()
 	-- clear the screen
 	cls(1)
 	-- draw the level bounds
-	rect(level_min_x+0.5,level_min_y+0.5,level_max_x-0.5,level_max_y-0.5,7)
+	rect(level_bounds.left.x+0.5,level_bounds.top.y+0.5,level_bounds.right.x-0.5,level_bounds.bottom.y-0.5,2)
 	-- draw the entities
 	local entity
 	for entity in all(entities) do
@@ -122,7 +177,8 @@ function spawn_entity(class_name,x,y,args)
 		on_hurt=noop,
 		-- collision functions
 		check_for_collisions=function(self)
-			local found_collision_dir=false
+			local found_collision=false
+			-- check for collisions against other entities
 			local entity
 			for entity in all(entities) do
 				if entity!=self then
@@ -130,11 +186,27 @@ function spawn_entity(class_name,x,y,args)
 					if collision_dir then
 						-- they are colliding!
 						self:on_collide(collision_dir,entity)
-						found_collision_dir=collision_dir
+						found_collision=true
 					end
 				end
 			end
-			return found_collision_dir
+			-- check for collisions against the level boundaries
+			if band(self.collision_channel,1)>0 then
+				if self.y+self.height+self.collision_padding>level_bounds.bottom.y then
+					self:on_collide("down",level_bounds.bottom)
+					found_collision=true
+				elseif self.x+self.width+self.collision_padding>level_bounds.right.x then
+					self:on_collide("right",level_bounds.right)
+					found_collision=true
+				elseif self.x-self.collision_padding<level_bounds.left.x then
+					self:on_collide("left",level_bounds.left)
+					found_collision=true
+				elseif self.y-self.collision_padding<level_bounds.top.y then
+					self:on_collide("up",level_bounds.top)
+					found_collision=true
+				end
+			end
+			return found_collision
 		end,
 		check_for_collision=function(self,other)
 			if band(self.collision_channel,other.platform_channel)>0 then
@@ -142,27 +214,37 @@ function spawn_entity(class_name,x,y,args)
 			end
 		end,
 		on_collide=function(self,dir,other)
-			self:handle_collision(dir,other)
+			self:handle_collision_position(dir,other)
+			self:handle_collision_velocity(dir,other)
 		end,
-		handle_collision=function(self,dir,other)
+		handle_collision_position=function(self,dir,other)
 			if dir=="left" then
 				self.x=other.x+other.width
-				self.vx=max(self.vx,other.vx)
 			elseif dir=="right" then
 				self.x=other.x-self.width
-				self.vx=min(self.vx,other.vx)
 			elseif dir=="up" then
 				self.y=other.y+other.height
-				self.vy=max(self.vy,other.vy)
 			elseif dir=="down" then
 				self.y=other.y-self.height
+			end
+		end,
+		handle_collision_velocity=function(self,dir,other)
+			if dir=="left" then
+				self.vx=max(self.vx,other.vx)
+			elseif dir=="right" then
+				self.vx=min(self.vx,other.vx)
+			elseif dir=="up" then
+				self.vy=max(self.vy,other.vy)
+			elseif dir=="down" then
 				self.vy=min(self.vy,other.vy)
 			end
 		end,
 		-- draw functions
-		draw=noop,
+		draw=function(self)
+			self:draw_outline()
+		end,
 		draw_outline=function(self,color)
-			rect(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,color)
+			rect(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,color or 7)
 		end,
 		-- lifetime functions
 		die=function(self)
