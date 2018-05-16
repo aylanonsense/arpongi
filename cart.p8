@@ -5,6 +5,11 @@ __lua__
 -- convenient no-op function that does nothing
 function noop() end
 
+local level_min_x=10
+local level_max_x=118
+local level_min_y=10
+local level_max_y=118
+
 local entities
 local buttons={}
 local button_presses={}
@@ -52,7 +57,9 @@ end
 function _draw()
 	camera()
 	-- clear the screen
-	cls(0)
+	cls(1)
+	-- draw the level bounds
+	rect(level_min_x+0.5,level_min_y+0.5,level_max_x-0.5,level_max_y-0.5,7)
 	-- draw the entities
 	local entity
 	for entity in all(entities) do
@@ -75,15 +82,37 @@ function spawn_entity(class_name,x,y,args)
 		vy=0,
 		width=8,
 		height=8,
+		collision_indent=2,
+		collision_padding=0,
+		collision_channel=0,
+		platform_channel=0,
 		hit_channel=0,
 		hurt_channel=0,
 		init=noop,
 		update=function(self)
 			self:apply_velocity()
 		end,
-		apply_velocity=function(self)
-			self.x+=self.vx
-			self.y+=self.vy
+		apply_velocity=function(self,stop_after_collision)
+			-- move in discrete steps if we might collide with something
+			if self.collision_channel>0 then
+				local max_move_x=min(self.collision_indent,self.width-2*self.collision_indent)-0.1
+				local max_move_y=min(self.collision_indent,self.height-2*self.collision_indent)-0.1
+				local steps=max(1,ceil(max(abs(self.vx/max_move_x),abs(self.vy/max_move_y))))
+				local i
+				for i=1,steps do
+					-- apply velocity
+					self.x+=self.vx/steps
+					self.y+=self.vy/steps
+					-- check for collisions
+					if self:check_for_collisions() and stop_after_collision then
+						return
+					end
+				end
+			-- just move all at once
+			else
+				self.x+=self.vx
+				self.y+=self.vy
+			end
 		end,
 		-- hit functions
 		is_hitting=function(self,other)
@@ -91,11 +120,51 @@ function spawn_entity(class_name,x,y,args)
 		end,
 		on_hit=noop,
 		on_hurt=noop,
+		-- collision functions
+		check_for_collisions=function(self)
+			local found_collision_dir=false
+			local entity
+			for entity in all(entities) do
+				if entity!=self then
+					local collision_dir=self:check_for_collision(entity)
+					if collision_dir then
+						-- they are colliding!
+						self:on_collide(collision_dir,entity)
+						found_collision_dir=collision_dir
+					end
+				end
+			end
+			return found_collision_dir
+		end,
+		check_for_collision=function(self,other)
+			if band(self.collision_channel,other.platform_channel)>0 then
+				return objects_colliding(self,other)
+			end
+		end,
+		on_collide=function(self,dir,other)
+			self:handle_collision(dir,other)
+		end,
+		handle_collision=function(self,dir,other)
+			if dir=="left" then
+				self.x=other.x+other.width
+				self.vx=max(self.vx,other.vx)
+			elseif dir=="right" then
+				self.x=other.x-self.width
+				self.vx=min(self.vx,other.vx)
+			elseif dir=="up" then
+				self.y=other.y+other.height
+				self.vy=max(self.vy,other.vy)
+			elseif dir=="down" then
+				self.y=other.y-self.height
+				self.vy=min(self.vy,other.vy)
+			end
+		end,
 		-- draw functions
 		draw=noop,
 		draw_outline=function(self,color)
 			rect(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,color)
 		end,
+		-- lifetime functions
 		die=function(self)
 			if self.is_alive then
 				self.is_alive=false
@@ -131,23 +200,43 @@ function objects_overlapping(obj1,obj2)
 	return rects_overlapping(obj1.x,obj1.y,obj1.width,obj1.height,obj2.x,obj2.y,obj2.width,obj2.height)
 end
 
+-- check to see if obj1 is colliding into obj2, and if so in which direction
+function objects_colliding(obj1,obj2)
+	local x1,y1,w1,h1,i,p=obj1.x,obj1.y,obj1.width,obj1.height,obj1.collision_indent,obj1.collision_padding
+	local x2,y2,w2,h2=obj2.x,obj2.y,obj2.width,obj2.height
+	-- check hitboxes
+	if rects_overlapping(x1+i,y1+h1/2,w1-2*i,h1/2+p,x2,y2,w2,h2) and obj1.vy>=obj2.vy then
+		return "down"
+	elseif rects_overlapping(x1+w1/2,y1+i,w1/2+p,h1-2*i,x2,y2,w2,h2) and obj1.vx>=obj2.vx then
+		return "right"
+	elseif rects_overlapping(x1-p,y1+i,w1/2+p,h1-2*i,x2,y2,w2,h2) and obj1.vx<=obj2.vx then
+		return "left"
+	elseif rects_overlapping(x1+i,y1-p,w1-2*i,h1/2+p,x2,y2,w2,h2) and obj1.vy<=obj2.vy then
+		return "up"
+	end
+end
+
 -- returns the second argument if condition is truthy, otherwise returns the third argument
 function ternary(condition,if_true,if_false)
 	return condition and if_true or if_false
 end
 
+-- increment a counter, wrapping to 20000 if it risks overflowing
 function increment_counter(n)
-	return ternary(n>32000,2000,n+1)
+	return ternary(n>32000,20000,n+1)
 end
 
+-- increment_counter on a property of an object
 function increment_counter_prop(obj,key)
 	obj[key]=increment_counter(obj[key])
 end
 
+-- decrement a counter but not below 0
 function decrement_counter(n)
 	return max(0,n-1)
 end
 
+-- decrement_counter on a property of an object, returns true when it reaches 0
 function decrement_counter_prop(obj,key)
 	local initial_value=obj[key]
 	obj[key]=decrement_counter(initial_value)
