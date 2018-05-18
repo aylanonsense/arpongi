@@ -12,16 +12,17 @@ platform channels:
 -- convenient no-op function that does nothing
 function noop() end
 
+local controllers={1,0}
 local level_bounds={
-	top={x=0,y=20,vx=0,vy=0,width=128,height=0,platform_channel=1},
-	left={x=2,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1},
-	bottom={x=0,y=108,vx=0,vy=0,width=128,height=0,platform_channel=1},
-	right={x=126,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1}
+	top={x=0,y=32,vx=0,vy=0,width=128,height=0,platform_channel=1},
+	left={x=0,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1},
+	bottom={x=0,y=105,vx=0,vy=0,width=128,height=0,platform_channel=1},
+	right={x=127,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1}
 }
 
 local entities
-local buttons={}
-local button_presses={}
+local buttons={{},{}}
+local button_presses={{},{}}
 
 local entity_classes={
 	commander={
@@ -31,9 +32,39 @@ local entity_classes={
 		move_y=0,
 		platform_channel=2,
 		is_commander=true,
+		is_frozen=false,
+		init=function(self)
+			self.health=spawn_entity("health_counter",ternary(self.is_facing_left,100,10),4,{
+				commander=self
+			})
+			self.gold=spawn_entity("gold_counter",ternary(self.is_facing_left,75,11),116,{
+				commander=self
+			})
+			self.xp=spawn_entity("xp_counter",ternary(self.is_facing_left,100,36),116,{
+				commander=self
+			})
+			self.primary_menu=spawn_entity("menu",ternary(self.is_facing_left,92,24),50,{
+				commander=self,
+				menu_items={1,2,3},
+				on_select=function(self,item,index)
+					self:hide()
+					self.commander.is_frozen=false
+				end
+			})
+		end,
 		update=function(self)
+			-- activate the menu
+			if not self.is_frozen and button_presses[self.player_num][4] then
+				self.is_frozen=true
+				button_presses[self.player_num][4]=false
+				self.primary_menu:show()
+			end
 			-- move vertically
-			self.move_y=ternary(btn(3,self.player_num),1,0)-ternary(btn(2,self.player_num),1,0)
+			if self.is_frozen then
+				self.move_y=0
+			else
+				self.move_y=ternary(buttons[self.player_num][3],1,0)-ternary(buttons[self.player_num][2],1,0)
+			end
 			self.vy=self.move_y
 			self:apply_velocity()
 			-- keep in bounds
@@ -50,7 +81,7 @@ local entity_classes={
 			if self.move_y!=0 then
 				palt(ternary(self.frames_alive%10<5,12,8),true)
 			end
-			draw_sprite(0,0,4,6,self.x+ternary(self.is_facing_left,4,-6),self.y-4+flr(self.height/2),self.is_facing_left)
+			draw_sprite(4*self.sprite,0,4,6,self.x+ternary(self.is_facing_left,4,-6),self.y-4+flr(self.height/2),self.is_facing_left)
 		end,
 		draw_shadow=function(self)
 			-- draw commander shadow
@@ -60,27 +91,115 @@ local entity_classes={
 			rectfill(self.x-0.5,self.y+1.5,self.x+self.width-1.5,self.y+self.height+0.5,1)
 		end
 	},
-	knight={
+	wizard={
 		extends="commander",
-		colors={8,8,14}
+		colors={13,12,12},
+		sprite=0
 	},
 	thief={
 		extends="commander",
-		colors={9,10,10}
+		colors={9,10,10},
+		sprite=1
 	},
-	wizard={
+	knight={
 		extends="commander",
-		colors={13,12,12}
+		colors={8,8,14},
+		sprite=2
+	},
+	health_counter={
+		width=16,
+		height=6,
+		draw=function(self)
+			draw_sprite(12,17,7,6,self.x,self.y)
+			print("50",self.x+9.5,self.y+1.5,8)
+		end
+	},
+	gold_counter={
+		width=17,
+		height=5,
+		draw=function(self)
+			draw_sprite(19,18,4,5,self.x,self.y)
+			print("500",self.x+6.5,self.y+0.5,7)
+			pset(self.x+20.5,self.y+2.5,5)
+		end
+	},
+	xp_counter={
+		width=16,
+		height=7,
+		draw=function(self)
+			draw_sprite(24,27,11,3,self.x,self.y+1)
+			print("2",self.x+13.5,self.y+0.5,7)
+			line(self.x+0.5,self.y+6.5,self.x+self.width-0.5,self.y+6.5,2)
+			line(self.x+0.5,self.y+6.5,self.x+0.5+0.7*(self.width-1),self.y+6.5,14)
+		end
+	},
+	menu={
+		width=11,
+		height=11,
+		is_visible=false,
+		highlighted_index=1,
+		update=function(self)
+			if self.is_visible then
+				if button_presses[self.commander.player_num][2] then
+					self.highlighted_index=ternary(self.highlighted_index==1,#self.menu_items,self.highlighted_index-1)
+				end
+				if button_presses[self.commander.player_num][3] then
+					self.highlighted_index=self.highlighted_index%#self.menu_items+1
+				end
+				if button_presses[self.commander.player_num][4] then
+					self:on_select(self.menu_items[self.highlighted_index],self.highlighted_index)
+				end
+				if button_presses[self.commander.player_num][5] then
+					self:hide()
+					self.commander.is_frozen=false
+				end
+			end
+		end,
+		draw=function(self)
+			if self.is_visible then
+				pal(1,0)
+				pal(11,self.commander.colors[2])
+				-- draw menu items
+				local i
+				for i=1,#self.menu_items do
+					draw_sprite(0,6,11,12,self.x,self.y+10*i-10)
+					draw_sprite(5+7*self.menu_items[i],0,7,7,self.x+2,self.y+10*i-8)
+				end
+				-- draw pointer
+				draw_sprite(16,7,13,8,self.x+ternary(self.commander.is_facing_left,12,-14),self.y+11*self.highlighted_index-8,self.commander.is_facing_left)
+				-- draw text box
+				local x=ternary(self.commander.is_facing_left,64,1)
+				draw_sprite(11,7,2,9,x,105)
+				draw_sprite(13,7,1,9,x+2,105,false,false,58)
+				draw_sprite(11,7,2,9,x+60,105,true)
+			end
+		end,
+		on_select=noop,
+		show=function(self)
+			if not self.is_visible then
+				self.is_visible=true
+				self.highlighted_index=1
+			end
+		end,
+		hide=function(self)
+			self.is_visible=false
+		end
 	},
 	ball={
-		width=4,
-		height=4,
-		collision_indent=1,
+		width=3,
+		height=3,
+		collision_indent=0.5,
 		vx=1,
 		vy=1,
 		collision_channel=1 + 2, -- level bounds + commanders
 		update=function(self)
 			self:apply_velocity(true)
+		end,
+		draw=function(self)
+			rectfill(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,7)
+		end,
+		draw_shadow=function(self)
+			rectfill(self.x-0.5,self.y+1.5,self.x+self.width-1.5,self.y+self.height+0.5,1)
 		end,
 		on_collide=function(self,dir,other)
 			if not other.is_commander or (not other.is_facing_left and dir=="left") or (other.is_facing_left and dir=="right") then
@@ -110,7 +229,7 @@ function _init()
 		is_facing_left=false
 	})
 	spawn_entity("thief",level_bounds.right.x-6-entity_classes.commander.width,60,{
-		player_num=0,
+		player_num=2,
 		facing_dir=-1,
 		is_facing_left=true
 	})
@@ -123,10 +242,13 @@ function _update(is_paused)
 	-- skip_frames+=1
 	-- if skip_frames%10>0 and not btn(5) then return end
 	-- keep track of button presses
-	local i
-	for i=0,5 do
-		button_presses[i]=btn(i) and not buttons[i]
-		buttons[i]=btn(i)
+	local p
+	for p=1,2 do
+		local i
+		for i=0,5 do
+			button_presses[p][i]=btn(i,controllers[p]) and not buttons[p][i]
+			buttons[p][i]=btn(i,controllers[p])
+		end
 	end
 	-- update all the entities
 	local entity
@@ -157,13 +279,39 @@ end
 -- end
 
 function _draw()
-	camera()
 	-- clear the screen
-	cls(1)
-	-- draw the level bounds
+	camera()
+	cls(0)
+	-- draw the level grounds
+	-- camera(0,-1)
 	rectfill(level_bounds.left.x+0.5,level_bounds.top.y+0.5,level_bounds.right.x-0.5,level_bounds.bottom.y-0.5,3)
-	local entity
+	draw_sprite(0,18,4,5,0,31)
+	draw_sprite(0,18,4,5,123,31,true)
+	draw_sprite(4,18,1,5,4,31,false,false,119)
+	draw_sprite(24,15,4,12,0,100)
+	draw_sprite(24,15,4,12,123,100,true)
+	draw_sprite(28,15,1,12,4,100,false,false,119)
+	-- draw castles
+	draw_sprite(29,7,29,20,4,11)
+	draw_sprite(29,7,29,20,94,11)
+	-- draw drawbridges
+	draw_sprite(5,18,7,5,14,31)
+	draw_sprite(5,18,7,5,104,31)
+	-- draw lines
+	local y
+	for y=37.5,100.5,6 do
+		line(63.5,y,63.5,y+2,5)
+	end
+	pset(63.5,33.5,11)
+	pset(63.5,103.5,11)
+	-- draw grass
+	draw_sprite(19,15,2,3,30,92)
+	draw_sprite(16,15,3,2,40,37)
+	draw_sprite(16,15,3,2,75,97)
+	draw_sprite(19,15,4,3,95,42)
 	-- draw the entities' shadows
+	-- camera()
+	local entity
 	for entity in all(entities) do
 		entity:draw_shadow()
 		pal()
@@ -186,8 +334,8 @@ function spawn_entity(class_name,x,y,args,skip_init)
 		entity={
 			frames_alive=0,
 			is_alive=true,
-			x=x,
-			y=y,
+			x=x or 0,
+			y=y or 0,
 			vx=0,
 			vy=0,
 			width=8,
@@ -380,8 +528,8 @@ function decrement_counter_prop(obj,key)
 	return initial_value>0 and initial_value<=1
 end
 
-function draw_sprite(sx,sy,sw,sh,x,y,flip_h,flip_y)
-	sspr(sx,sy,sw,sh,x+0.5,y+0.5,sw,sh,flip_h,flip_y)
+function draw_sprite(sx,sy,sw,sh,x,y,flip_h,flip_y,sw2,sh2)
+	sspr(sx,sy,sw,sh,x+0.5,y+0.5,(sw2 or sw),(sh2 or sh),flip_h,flip_y)
 end
 
 __gfx__
@@ -400,22 +548,22 @@ __gfx__
 17777777771177711d7677d610000000111110000000100000111110005555555555555555555555555555555555555555555555555555555555555555555555
 1777777777117771111166d100000001111111000001110000111110005555555555555555555555555555555555555555555555555555555555555555555555
 17777777771167610000111000000001111111000001110001111111005555555555555555555555555555555555555555555555555555555555555555555555
-167777777610111055555555b3333011111111100011111001111111005555555555555555555555555555555555555555555555555555555555555555555555
-111111111115555555555555b3333011111111100011111011111111105555555555555555555555555555555555555555555555555555555555555555555555
-011111111105088088055555bb333111111111110111111111111111105555555555555555555555555555555555555555555555555555555555555555555555
-0222211244428888ee855555bbbbb001111111000111111111111111115555555555555555555555555555555555555555555555555555555555555555555555
-2bbbb334222488888e8555554bbbb001111111001111111111111111005555555555555555555555555555555555555555555555555555555555555555555555
-bbbbb114444408888805555544444000111110001111111111111111005555555555555555555555555555555555555555555555555555555555555555555555
-bb333114222400888005555544444000111110011111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
-b3333332444200080005555524444000111111111111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
+1677777776101110b0b000b5b3333011111111100011111001111111005555555555555555555555555555555555555555555555555555555555555555555555
+11111111111555551b00b0b5b3333011111111100011111011111111105555555555555555555555555555555555555555555555555555555555555555555555
+01111111110508808801b1b5bb333111111111110111111111111111105555555555555555555555555555555555555555555555555555555555555555555555
+0222211244428888ee80aa05bbbb3001111111000111111111111111115555555555555555555555555555555555555555555555555555555555555555555555
+2bbbb334222488888e8aa7a54bbbb001111111001111111111111111005555555555555555555555555555555555555555555555555555555555555555555555
+bbbb311444440888880aa7a544444000111110001111111111111111005555555555555555555555555555555555555555555555555555555555555555555555
+bb333114222400888009aaa544444000111110011111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
+b3333312444200080000aa0524444000111111111111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000003b00022222000111111111111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000003bb0012222000111111111111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
 0000000000000000000100bb11111000111111111211121111111110005555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000001000001111000111111111222221111111110005555555555555555555555555555555555555555555555555555555555555555555555
-00000000000600000061600055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0000000006ddd6006dd1dd6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-000600006ddddd606ddddd6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-06ddd60066d6d66066d6d66055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000600000061600070070707000555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0000000006ddd6006dd1dd6070075707000555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+000600006ddddd606ddddd6077007007705055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+06ddd60066d6d66066d6d66055555555550555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06d6d600066666006666666055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0666660003bbbb0003bbbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 03bbbb000dd666000dd6660055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
