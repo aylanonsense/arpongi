@@ -4,6 +4,30 @@ __lua__
 
 --[[
 
+todo:
+	buildings take damage / are triggered
+	commanders take damage when the ball hits a side
+	render layers
+
+	the game ends when a commander reaches 0 hp
+	the ball changes color / has a streak
+	building over another building destroys it first
+	gain gold
+	troops
+	paying for buildings costs money
+	sound effects
+	screen shake
+
+	main menu
+	lottery for the shared button
+	character select
+	music
+	menu items are greyed out when unuseable
+	gain xp
+	leveling up
+	upgrading buildings
+
+
 platform channels:
 	1:	level bounds
 	2:	commander
@@ -15,12 +39,17 @@ function noop() end
 local controllers={1,0}
 local level_bounds={
 	top={x=0,y=32,vx=0,vy=0,width=128,height=0,platform_channel=1},
-	left={x=0,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1},
+	left={x=0,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1,is_left_wall=true},
 	bottom={x=0,y=105,vx=0,vy=0,width=128,height=0,platform_channel=1},
-	right={x=127,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1}
+	right={x=127,y=0,vx=0,vy=0,width=0,height=128,platform_channel=1,is_right_wall=true}
 }
 
+local game_frames
+local freeze_frames
+local screen_shake_frames
+
 local entities
+local commanders
 local buttons={{},{}}
 local button_presses={{},{}}
 
@@ -72,11 +101,11 @@ local entity_classes={
 				commander=self,
 				menu_items=self.plots.locations,
 				on_select=function(self,location)
-					self:hide()
-					self.commander.is_frozen=false
-					local action=self.action
 					if self.action=="build" then
-						self.commander:build(self.build_choice[2],location)
+						if self.commander:build(self.build_choice[2],self.build_choice[4],location) then
+							self:hide()
+							self.commander.is_frozen=false
+						end
 					end
 				end
 			})
@@ -97,7 +126,7 @@ local entity_classes={
 			self.vy=self.move_y
 			self:apply_velocity()
 			-- keep in bounds
-			self.y=mid(level_bounds.top.y,self.y,level_bounds.bottom.y-self.height)
+			self.y=mid(level_bounds.top.y-5,self.y,level_bounds.bottom.y-self.height+5)
 		end,
 		draw=function(self)
 			-- draw paddle
@@ -119,10 +148,14 @@ local entity_classes={
 			-- draw paddle shadow
 			rectfill(self.x-0.5,self.y+1.5,self.x+self.width-1.5,self.y+self.height+0.5,1)
 		end,
-		build=function(self,building_type,location)
-			location.building=spawn_entity(building_type,location.x,location.y,{
-				commander=self
-			})
+		build=function(self,building_type,cost,location)
+			if self.gold.amount>=cost then
+				self.gold.amount-=cost
+				location.building=spawn_entity(building_type,location.x,location.y,{
+					commander=self
+				})
+				return location.building
+			end
 		end
 	},
 	wizard={
@@ -140,24 +173,64 @@ local entity_classes={
 		colors={8,8,14},
 		sprite=2
 	},
+	counter={
+		amount=0,
+		displayed_amount=0,
+		update=function(self)
+			if self.displayed_amount<self.amount then
+				self.displayed_amount=min(self.amount,self.displayed_amount+rnd_int(self.min_tick,self.max_tick))
+			else
+				self.displayed_amount=max(0,max(self.amount,self.displayed_amount-rnd_int(self.min_tick,self.max_tick)))
+			end
+		end,
+		add=function(self,amt)
+			self.amount+=amt
+		end
+	},
 	health_counter={
+		extends="counter",
+		amount=50,
+		displayed_amount=50,
+		min_tick=1,
+		max_tick=1,
 		width=16,
 		height=6,
 		draw=function(self)
 			draw_sprite(12,17,7,6,self.x,self.y)
-			print("50",self.x+9.5,self.y+1.5,8)
+			if self.displayed_amount<self.amount then
+				color(11)
+			elseif self.displayed_amount>self.amount then
+				color(7)
+			else
+				color(8)
+			end
+			print(self.displayed_amount,self.x+9.5,self.y+1.5)
 		end
 	},
 	gold_counter={
+		extends="counter",
+		min_tick=9,
+		max_tick=16,
 		width=17,
 		height=5,
 		draw=function(self)
 			draw_sprite(19,18,4,5,self.x,self.y)
-			print("500",self.x+6.5,self.y+0.5,7)
 			pset(self.x+20.5,self.y+2.5,5)
+			if self.displayed_amount<self.amount then
+				color(10)
+			elseif self.displayed_amount>self.amount then
+				color(8)
+			else
+				color(7)
+			end
+			print(self.displayed_amount,self.x+6.5,self.y+0.5)
 		end
 	},
 	xp_counter={
+		amount=500,
+		extends="counter",
+		min_tick=18,
+		max_tick=32,
 		width=16,
 		height=7,
 		draw=function(self)
@@ -165,6 +238,32 @@ local entity_classes={
 			print("2",self.x+13.5,self.y+0.5,7)
 			line(self.x+0.5,self.y+6.5,self.x+self.width-0.5,self.y+6.5,2)
 			line(self.x+0.5,self.y+6.5,self.x+0.5+0.7*(self.width-1),self.y+6.5,14)
+		end
+	},
+	pop_text={
+		width=1,
+		height=1,
+		vy=-1.5,
+		frames_to_death=32,
+		update=function(self)
+			self.vy+=0.1
+			self:apply_velocity()
+		end,
+		draw=function(self)
+			local text=""..self.amount
+			local dx=0
+			if self.type=="health" then
+				draw_sprite(12,17,7,6,self.x-2*#text-5,self.y-6)
+				color(8)
+			elseif self.type=="xp" then
+				dx=-7
+				draw_sprite(35,27,7,4,self.x+2*#text-3,self.y-4)
+				color(14)
+			elseif self.type=="gold" then
+				draw_sprite(19,18,4,5,self.x-2*#text-2,self.y-5)
+				color(10)
+			end
+			print(text,self.x-2*#text+4.5+dx,self.y-4.5)
 		end
 	},
 	plots={
@@ -278,8 +377,8 @@ local entity_classes={
 		width=3,
 		height=3,
 		collision_indent=0.5,
-		vx=1,
-		vy=1,
+		vx=0.75,
+		vy=0,
 		collision_channel=1 + 2, -- level bounds + commanders
 		update=function(self)
 			self:apply_velocity(true)
@@ -299,9 +398,30 @@ local entity_classes={
 				elseif (dir=="up" and self.vy<0) or (dir=="down" and self.vy>0) then
 					self.vy*=-1
 				end
+				-- take damage
+				if other.is_left_wall then
+					commanders[1].health.amount-=10
+					freeze_and_shake_screen(0,5)
+				elseif other.is_right_wall then
+					commanders[2].health.amount-=10
+					freeze_and_shake_screen(0,5)
+				end
 				-- change vertical velocity a bit
 				if other.is_commander then
-					self.vy+=1
+					local offset_y=self.y+self.height/2-self.vy-other.y-other.height/2+other.vy/2
+					local max_offset=other.height/2
+					local percent_offset=mid(-1,offset_y/max_offset,1)
+					local target_vy=1.2*percent_offset+0.6*self.vy
+					self.vy=target_vy
+					other.gold.amount+=50
+					spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+						amount=50,
+						type="gold"
+					})
+					spawn_entity("pop_text",self.x+self.width/2,other.y+1,{
+						amount=10,
+						type="xp"
+					})
 				end
 				-- stop moving / colliding
 				return true
@@ -338,23 +458,32 @@ local entity_classes={
 }
 
 function _init()
+	game_frames=0
+	freeze_frames=0
+	screen_shake_frames=0
+
 	entities={}
-	spawn_entity("knight",level_bounds.left.x+6,60,{
-		player_num=1,
-		facing_dir=1,
-		is_facing_left=false
-	})
-	spawn_entity("thief",level_bounds.right.x-6-entity_classes.commander.width,60,{
-		player_num=2,
-		facing_dir=-1,
-		is_facing_left=true
-	})
-	spawn_entity("ball",50,50)
+	commanders={
+		spawn_entity("knight",level_bounds.left.x+6,60,{
+			player_num=1,
+			facing_dir=1,
+			is_facing_left=false
+		}),
+		spawn_entity("thief",level_bounds.right.x-6-entity_classes.commander.width,60,{
+			player_num=2,
+			facing_dir=-1,
+			is_facing_left=true
+		})
+	}
+	spawn_entity("ball",62,66)
 end
 
 -- local skip_frames=0
 -- local was_paused=false
 function _update(is_paused)
+	game_frames=increment_counter(game_frames)
+	freeze_frames=decrement_counter(freeze_frames)
+	screen_shake_frames=decrement_counter(screen_shake_frames)
 	-- skip_frames+=1
 	-- if skip_frames%10>0 and not btn(5) then return end
 	-- keep track of button presses
@@ -369,8 +498,12 @@ function _update(is_paused)
 	-- update all the entities
 	local entity
 	for entity in all(entities) do
-		increment_counter_prop(entity,"frames_alive")
-		entity:update()
+		if decrement_counter_prop(entity,"frames_to_death") then
+			entity:die()
+		else
+			increment_counter_prop(entity,"frames_alive")
+			entity:update()
+		end
 	end
 	-- check for hits
 	for i=1,#entities do
@@ -395,8 +528,13 @@ end
 -- end
 
 function _draw()
+	-- shake the camera
+	local shake_x=0
+	if freeze_frames<=0 and screen_shake_frames>0 then
+		shake_x=ceil(screen_shake_frames/3)*(game_frames%2*2-1)
+	end
 	-- clear the screen
-	camera()
+	camera(shake_x,0)
 	cls(0)
 	-- draw the level grounds
 	-- camera(0,-1)
@@ -449,6 +587,7 @@ function spawn_entity(class_name,x,y,args,skip_init)
 		-- create a default entity
 		entity={
 			frames_alive=0,
+			frames_to_death=0,
 			is_alive=true,
 			x=x or 0,
 			y=y or 0,
@@ -591,6 +730,10 @@ function spawn_entity(class_name,x,y,args,skip_init)
 	return entity
 end
 
+function freeze_and_shake_screen(f,s)
+	freeze_frames,screen_shake_frames=max(f,freeze_frames),max(s,screen_shake_frames)
+end
+
 -- check to see if two rectangles are overlapping
 function rects_overlapping(x1,y1,w1,h1,x2,y2,w2,h2)
 	return x1<x2+w2 and x2<x1+w1 and y1<y2+h2 and y2<y1+h1
@@ -644,6 +787,12 @@ function decrement_counter_prop(obj,key)
 	return initial_value>0 and initial_value<=1
 end
 
+-- generates a random integer between min_val and max_val, inclusive
+function rnd_int(min_val,max_val)
+	return flr(min_val+rnd(1+max_val-min_val))
+end
+
+-- wrapper for the sspr function
 function draw_sprite(sx,sy,sw,sh,x,y,flip_h,flip_y,sw2,sh2)
 	sspr(sx,sy,sw,sh,x+0.5,y+0.5,(sw2 or sw),(sh2 or sh),flip_h,flip_y)
 end
@@ -676,10 +825,10 @@ b3333312444200080000aa0524444000111111111111111111111110005555555555555555555555
 00000000000000000003bb0012222000111111111111111111111110005555555555555555555555555555555555555555555555555555555555555555555555
 0000000000000000000100bb11111000111111111211121111111110005555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000001000001111000111111111222221111111110005555555555555555555555555555555555555555555555555555555555555555555555
-00000000000600000061600070070707000255555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0000000006ddd6006dd1dd6070075707000255555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-000600006ddddd606ddddd6077007007705255555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-06ddd60066d6d66066d6d66000000000000255555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000600000061600070070707000e0e0ee055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0000000006ddd6006dd1dd60700757070000e00e0e55555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+000600006ddddd606ddddd6077007007705e0e0ee055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+06ddd60066d6d66066d6d66000000000000e0e0e0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06d6d600066666006666666000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0666660003bbbb0003bbbb0000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 03bbbb000dd666000dd6660000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
@@ -707,16 +856,16 @@ d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555
 00000000000000000000000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000000000000111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000400000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000040000002444400000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00004000000244440024242200000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00024400002424220222724200000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00242420022272420227772400000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-02227242022777240271717200000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-02277724027771720277777200000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-02777172023333320033313000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0033333000bbb1b000bbbbb055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00b1bbb000b1bbb000b1bbb055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000000000004000000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000400000024444000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00040000002444400242422000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00244000024242202227242000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+02424200222724202277724000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+22272420227772402717172000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+22777240277717202777772000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+27771720233333200333130000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+033333000bbb1b000bbbbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0b1bbb000b1bbb000b1bbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 88888888888888888888888855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
