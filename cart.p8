@@ -5,32 +5,27 @@ __lua__
 --[[
 
 todo:
-	buildings take damage / are triggered
-	commanders take damage when the ball hits a side
 	render layers
-
-	the game ends when a commander reaches 0 hp
-	the ball changes color / has a streak
+	upgrading buildings
 	building over another building destroys it first
-	gain gold
-	troops
-	paying for buildings costs money
+	ball gradually speeds up
+	the game ends when a commander reaches 0 hp
 	sound effects
-	screen shake
-
+	launch ball with middle button
 	main menu
-	lottery for the shared button
 	character select
-	music
+
 	menu items are greyed out when unuseable
 	gain xp
 	leveling up
-	upgrading buildings
 
 
 platform channels:
 	1:	level bounds
 	2:	commander
+
+hurt channels:
+	1:	buildings
 ]]
 
 -- convenient no-op function that does nothing
@@ -50,6 +45,7 @@ local screen_shake_frames
 
 local entities
 local commanders
+local ball
 local buttons={{},{}}
 local button_presses={{},{}}
 
@@ -73,6 +69,9 @@ local entity_classes={
 				commander=self
 			})
 			self.plots=spawn_entity("plots",ternary(self.is_facing_left,76,20),36,{
+				commander=self
+			})
+			self.army=spawn_entity("army",0,0,{
 				commander=self
 			})
 			local x=ternary(self.is_facing_left,92,24)
@@ -151,8 +150,9 @@ local entity_classes={
 		build=function(self,building_type,cost,location)
 			if self.gold.amount>=cost then
 				self.gold.amount-=cost
-				location.building=spawn_entity(building_type,location.x,location.y,{
-					commander=self
+				location.building=spawn_entity(building_type,location.x-1,location.y-1,{
+					commander=self,
+					battle_line=location.battle_line
 				})
 				return location.building
 			end
@@ -160,17 +160,17 @@ local entity_classes={
 	},
 	wizard={
 		extends="commander",
-		colors={13,12,12},
+		colors={13,12,12,4},
 		sprite=0
 	},
 	thief={
 		extends="commander",
-		colors={9,10,10},
+		colors={9,10,10,4},
 		sprite=1
 	},
 	knight={
 		extends="commander",
-		colors={8,8,14},
+		colors={8,8,14,15},
 		sprite=2
 	},
 	counter={
@@ -209,6 +209,7 @@ local entity_classes={
 	},
 	gold_counter={
 		extends="counter",
+		amount=500,
 		min_tick=9,
 		max_tick=16,
 		width=17,
@@ -272,13 +273,13 @@ local entity_classes={
 		init=function(self)
 			local x,y=self.x,self.y
 			self.locations={
-				{x=x+13,y=y},
-				{x=x,y=y+13},
-				{x=x+26,y=y+17},
-				{x=x+13,y=y+30},
-				{x=x,y=y+43},
-				{x=x+26,y=y+47},
-				{x=x+13,y=y+60}
+				{x=x+13,y=y,battle_line=1},
+				{x=x,y=y+13,battle_line=2},
+				{x=x+26,y=y+17,battle_line=2},
+				{x=x+13,y=y+30,battle_line=3},
+				{x=x,y=y+43,battle_line=4},
+				{x=x+26,y=y+47,battle_line=4},
+				{x=x+13,y=y+60,battle_line=5}
 			}
 		end,
 		draw=function(self)
@@ -290,6 +291,61 @@ local entity_classes={
 			end
 		end
 	},
+	army={
+		init=function(self)
+			self.troops={}
+		end,
+		update=function(self)
+			local commander=self.commander
+			local troop
+			for troop in all(self.troops) do
+				if ball and ball.is_alive and ball.commander and ball.commander!=self.commander and contains_point(ball,troop.x,troop.y,1) then
+					self:destroy_troop(troop)
+				elseif (commander.is_facing_left and troop.x<=18) or (not commander.is_facing_left and troop.x>=108) then
+					troop.y-=0.1
+					troop.battle_line=nil
+					if troop.y<28 then
+						commanders[ternary(commander.is_facing_left,1,2)].health.amount-=1
+						freeze_and_shake_screen(0,5)
+						self:destroy_troop(troop)
+					end
+				else
+					troop.x+=0.1*commander.facing_dir
+					-- check for collisions with buildings
+					local location
+					for location in all(commanders[commander.opposing_player_num].plots.locations) do
+						if location.building and location.building.is_alive and contains_point(location.building,troop.x,troop.y,1) then
+							troop.x-=2*commander.facing_dir
+							location.building:damage(1)
+						end
+					end
+				end
+			end
+		end,
+		draw=function(self)
+			local troop
+			for troop in all(self.troops) do
+				pset(troop.x+0.5,troop.y-0.5,self.commander.colors[4])
+				pset(troop.x+0.5,troop.y+0.5,self.commander.colors[2])
+			end
+		end,
+		draw_shadow=function(self)
+			local troop
+			for troop in all(self.troops) do
+				pset(troop.x-0.5,troop.y+0.5,1)
+			end
+		end,
+		spawn_troop=function(self,building)
+			add(self.troops,{
+				x=building.x+3+self.commander.facing_dir*(rnd(5)),
+				y=building.y+building.height/2+rnd_int(-4,3),
+				battle_line=building.battle_line
+			})
+		end,
+		destroy_troop=function(self,troop)
+			del(self.troops,troop)
+		end
+	},
 	menu={
 		width=11,
 		height=11,
@@ -298,20 +354,21 @@ local entity_classes={
 		hint_counter=0,
 		update=function(self)
 			if self.is_visible then
+				local player_num=self.commander.player_num
 				increment_counter_prop(self,"hint_counter")
-				if button_presses[self.commander.player_num][2] then
+				if button_presses[player_num][2] then
 					self.highlighted_index=ternary(self.highlighted_index==1,#self.menu_items,self.highlighted_index-1)
 					self.hint_counter=0
 				end
-				if button_presses[self.commander.player_num][3] then
+				if button_presses[player_num][3] then
 					self.highlighted_index=self.highlighted_index%#self.menu_items+1
 					self.hint_counter=0
 				end
-				if button_presses[self.commander.player_num][4] then
-					button_presses[self.commander.player_num][4]=false
+				if button_presses[player_num][4] then
+					button_presses[player_num][4]=false
 					self:on_select(self.menu_items[self.highlighted_index],self.highlighted_index)
 				end
-				if button_presses[self.commander.player_num][5] then
+				if button_presses[player_num][5] then
 					self:hide()
 					self.commander.is_frozen=false
 				end
@@ -377,6 +434,7 @@ local entity_classes={
 		width=3,
 		height=3,
 		collision_indent=0.5,
+		hit_channel=1, -- buildings
 		vx=0.75,
 		vy=0,
 		collision_channel=1 + 2, -- level bounds + commanders
@@ -384,7 +442,12 @@ local entity_classes={
 			self:apply_velocity(true)
 		end,
 		draw=function(self)
-			rectfill(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,7)
+			if self.commander then
+				color(self.commander.colors[3])
+			else
+				color(7)
+			end
+			rectfill(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5)
 		end,
 		draw_shadow=function(self)
 			rectfill(self.x-0.5,self.y+1.5,self.x+self.width-1.5,self.y+self.height+0.5,1)
@@ -399,12 +462,10 @@ local entity_classes={
 					self.vy*=-1
 				end
 				-- take damage
-				if other.is_left_wall then
-					commanders[1].health.amount-=10
+				if other.is_left_wall or other.is_right_wall then
+					commanders[ternary(other.is_left_wall,1,2)].health.amount-=10
 					freeze_and_shake_screen(0,5)
-				elseif other.is_right_wall then
-					commanders[2].health.amount-=10
-					freeze_and_shake_screen(0,5)
+					self:die()
 				end
 				-- change vertical velocity a bit
 				if other.is_commander then
@@ -422,6 +483,7 @@ local entity_classes={
 						amount=10,
 						type="xp"
 					})
+					self.commander=other
 				end
 				-- stop moving / colliding
 				return true
@@ -429,31 +491,86 @@ local entity_classes={
 		end
 	},
 	building={
-		width=5,
-		height=5,
+		width=7,
+		height=7,
 		upgrades=0,
 		offset_y=0,
+		hit_points=100,
+		max_hit_points=100,
+		show_health_bar_frames=0,
+		hurt_channel=1, -- buildings
+		update=function(self)
+			decrement_counter_prop(self,"show_health_bar_frames")
+		end,
 		draw=function(self)
 			pal(3,self.commander.colors[1])
-			pal(11,self.commander.colors[3])
-			draw_sprite(0+8*self.upgrades,8+15*self.sprite,8,15,self.x-1,self.y-10+self.offset_y)
+			pal(11,self.commander.colors[2])
+			pal(14,self.commander.colors[3])
+			draw_sprite(0+8*self.upgrades,8+15*self.sprite,8,15,self.x,self.y-9+self.offset_y)
+			if self.show_health_bar_frames>0 then
+				local height=self.health_bar_height[self.upgrades+1]
+				rectfill(self.x+0.5,self.y-1.5-height,self.x+6.5,self.y-0.5-height,2)
+				rectfill(self.x+0.5,self.y-1.5-height,self.x+0.5+6*self.hit_points/self.max_hit_points,self.y-0.5-height,8)
+			end
 		end,
 		draw_shadow=function(self)
-			draw_sprite(24,18+12*self.sprite+4*self.upgrades,11,4,self.x-10,self.y+1)
-		end
+			draw_sprite(24,18+12*self.sprite+4*self.upgrades,11,4,self.x-9,self.y+2)
+		end,
+		on_hurt=function(self,other)
+			self.invincibility_frames=15
+			if other.commander==self.commander then
+				self:on_trigger(other)
+			elseif other.commander then
+				self:damage(25)
+			end
+		end,
+		damage=function(self,amount)
+			self.hit_points-=amount
+			self.show_health_bar_frames=60
+			if amount>1 then
+				freeze_and_shake_screen(0,2)
+			end
+			if self.hit_points<=0 then
+				self:die()
+			end
+		end,
+		on_trigger=noop
 	},
 	keep={
 		extends="building",
-		sprite=1
+		sprite=1,
+		health_bar_height={4,6,7},
+		on_trigger=function(self)
+			local i
+			for i=1,5 do
+				self.commander.army:spawn_troop(self)
+			end
+		end
 	},
 	farm={
 		extends="building",
 		sprite=2,
-		offset_y=4
+		health_bar_height={2,2,2},
+		offset_y=4,
+		on_trigger=function(self,other)
+			self.commander.gold.amount+=25
+			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+				amount=25,
+				type="gold"
+			})
+		end
 	},
 	inn={
 		extends="building",
-		sprite=3
+		sprite=3,
+		health_bar_height={3,4,5},
+		on_trigger=function(self,other)
+			self.commander.health.amount+=3
+			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+				amount=3,
+				type="health"
+			})
+		end
 	}
 }
 
@@ -461,21 +578,22 @@ function _init()
 	game_frames=0
 	freeze_frames=0
 	screen_shake_frames=0
-
 	entities={}
 	commanders={
 		spawn_entity("knight",level_bounds.left.x+6,60,{
 			player_num=1,
+			opposing_player_num=2,
 			facing_dir=1,
 			is_facing_left=false
 		}),
 		spawn_entity("thief",level_bounds.right.x-6-entity_classes.commander.width,60,{
 			player_num=2,
+			opposing_player_num=1,
 			facing_dir=-1,
 			is_facing_left=true
 		})
 	}
-	spawn_entity("ball",62,66)
+	ball=spawn_entity("ball",62,66)
 end
 
 -- local skip_frames=0
@@ -501,6 +619,7 @@ function _update(is_paused)
 		if decrement_counter_prop(entity,"frames_to_death") then
 			entity:die()
 		else
+			decrement_counter_prop(entity,"invincibility_frames")
 			increment_counter_prop(entity,"frames_alive")
 			entity:update()
 		end
@@ -509,10 +628,31 @@ function _update(is_paused)
 	for i=1,#entities do
 		local j
 		for j=1,#entities do
-			if i!=j and entities[i]:is_hitting(entities[j]) then
+			if i!=j and entities[i]:is_hitting(entities[j]) and entities[j].invincibility_frames<=0 then
 				entities[i]:on_hit(entities[j])
 				entities[j]:on_hurt(entities[i])
 			end
+		end
+	end
+	-- check for troop fights
+	for i=1,5 do
+		local farthest_left
+		local farthest_right
+		local j
+		local troop
+		for troop in all(commanders[1].army.troops) do
+			if troop.battle_line==i and (not farthest_right or troop.x>farthest_right.x) then
+				farthest_right=troop
+			end
+		end
+		for troop in all(commanders[2].army.troops) do
+			if troop.battle_line==i and (not farthest_left or troop.x<farthest_left.x) then
+				farthest_left=troop
+			end
+		end
+		if farthest_left and farthest_right and farthest_left.x<=farthest_right.x then
+			commanders[1].army:destroy_troop(farthest_right)
+			commanders[2].army:destroy_troop(farthest_left)
 		end
 	end
 	-- remove dead entities
@@ -601,6 +741,7 @@ function spawn_entity(class_name,x,y,args,skip_init)
 			platform_channel=0,
 			hit_channel=0,
 			hurt_channel=0,
+			invincibility_frames=0,
 			init=noop,
 			update=function(self)
 				self:apply_velocity()
@@ -760,6 +901,12 @@ function objects_colliding(obj1,obj2)
 	end
 end
 
+-- checks to see if a point is contained in an object's bounding box
+function contains_point(obj,x,y,fudge)
+	fudge=fudge or 0
+	return obj.x-fudge<x and x<obj.x+obj.width+fudge and obj.y-fudge<y and y<obj.y+obj.height+fudge
+end
+
 -- returns the second argument if condition is truthy, otherwise returns the third argument
 function ternary(condition,if_true,if_false)
 	return condition and if_true or if_false
@@ -830,9 +977,9 @@ b3333312444200080000aa0524444000111111111111111111111110005555555555555555555555
 000600006ddddd606ddddd6077007007705e0e0ee055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06ddd60066d6d66066d6d66000000000000e0e0e0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06d6d600066666006666666000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0666660003bbbb0003bbbb0000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-03bbbb000dd666000dd6660000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0666660003bbbb0003bbbb0000000000000555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0666660003bbbe0003bbbe0000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+03bbbe000dd666000dd6660000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0666660003bbbe0003bbbe0000000000000555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06dd6600066666000666660000011111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 06666600066166000661660000111111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0d616d000d616d000d616d0000011111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
@@ -864,8 +1011,8 @@ d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555
 22272420227772402717172000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 22777240277717202777772000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 27771720233333200333130000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-033333000bbb1b000bbbbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0b1bbb000b1bbb000b1bbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+033333000eee1e000eeeee0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0e1eee000e1eee000e1eee0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 88888888888888888888888855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
@@ -883,16 +1030,16 @@ d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555
 88888888888888888888888855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0000000000000000000b000055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0000000000000000000b000055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000b0000003bb00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000b0000003bb00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0000b000003bb00003bbbb0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0000b000003bb0000066600055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0003bb0003bbbb00006dd00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0003bb0000666000006660b055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-003bbbb0006dd0b000dd60b055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00066600006660b000b663bb55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0006dd0000dd63bb00b66d6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0006660000666d6003bb6d6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000b0000003be00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000b0000003be00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0000b000003be00003bbbe0055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0000b000003be0000066600055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0003be0003bbbe00006dd00055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0003be0000666000006660b055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+003bbbe0006dd0b000dd60b055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00066600006660b000b663be55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0006dd0000dd63be00b66d6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+0006660000666d6003be6d6055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 000dd60000666d60006d666055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 0006660000d666600066666055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 000d160000d616d000d616d055555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
