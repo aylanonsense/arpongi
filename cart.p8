@@ -5,9 +5,6 @@ __lua__
 --[[
 
 todo:
-	render layers
-	upgrading buildings
-	building over another building destroys it first
 	ball gradually speeds up
 	the game ends when a commander reaches 0 hp
 	sound effects
@@ -19,6 +16,13 @@ todo:
 	gain xp
 	leveling up
 
+render layers:
+	2:	plots/grass
+	3:	troops
+	5:	buildings, players, ball
+	7:	effects
+	8:	menus
+	9:	ui
 
 platform channels:
 	1:	level bounds
@@ -77,10 +81,18 @@ local entity_classes={
 			local x=ternary(self.is_facing_left,92,24)
 			self.primary_menu=spawn_entity("menu",x,63,{
 				commander=self,
-				menu_items={{1,"build"},{2,"upgrade"},{3,"cast spell"}},
+				menu_items={{1,"build"},{2,"upgrade"}},--,{3,"cast spell"}},
 				on_select=function(self,item,index)
+					-- build
 					if index==1 then
 						self.commander.build_menu:show()
+						self:hide()
+					-- upgrade
+					elseif index==2 then
+						local location_menu=self.commander.location_menu
+						location_menu.action="upgrade"
+						location_menu.prev_choice=item
+						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
 						self:hide()
 					end
 				end
@@ -92,7 +104,7 @@ local entity_classes={
 					self:hide()
 					local location_menu=self.commander.location_menu
 					location_menu.action="build"
-					location_menu.build_choice=item
+					location_menu.prev_choice=item
 					location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
 				end
 			})
@@ -101,10 +113,21 @@ local entity_classes={
 				menu_items=self.plots.locations,
 				on_select=function(self,location)
 					if self.action=="build" then
-						if self.commander:build(self.build_choice[2],self.build_choice[4],location) then
+						if self.commander:build(self.prev_choice[2],self.prev_choice[4],location) then
 							self:hide()
 							self.commander.is_frozen=false
 						end
+					elseif self.action=="upgrade" then
+						if location.building and location.building.is_alive then
+							if  location.building.upgrades<2 and self.commander:upgrade(location.building) then
+								self:hide()
+								self.commander.is_frozen=false
+							end
+						else
+							self:hide()
+							self.commander.is_frozen=false
+						end
+
 					end
 				end
 			})
@@ -149,12 +172,23 @@ local entity_classes={
 		end,
 		build=function(self,building_type,cost,location)
 			if self.gold.amount>=cost then
-				self.gold.amount-=cost
+				self.gold:add(-cost)
+				if location.building and location.building.is_alive then
+					location.building:die()
+				end
 				location.building=spawn_entity(building_type,location.x-1,location.y-1,{
 					commander=self,
 					battle_line=location.battle_line
 				})
 				return location.building
+			end
+		end,
+		upgrade=function(self,building)
+			local cost=building.upgrade_options[building.upgrades+1][3]
+			if self.gold.amount>=cost then
+				self.gold:add(-cost)
+				building.upgrades+=1
+				return true
 			end
 		end
 	},
@@ -174,6 +208,7 @@ local entity_classes={
 		sprite=2
 	},
 	counter={
+		render_layer=9,
 		amount=0,
 		displayed_amount=0,
 		update=function(self)
@@ -184,13 +219,14 @@ local entity_classes={
 			end
 		end,
 		add=function(self,amt)
-			self.amount+=amt
+			self.amount=mid(0,self.amount+amt,self.max_amount)
 		end
 	},
 	health_counter={
 		extends="counter",
 		amount=50,
 		displayed_amount=50,
+		max_amount=50,
 		min_tick=1,
 		max_tick=1,
 		width=16,
@@ -210,6 +246,7 @@ local entity_classes={
 	gold_counter={
 		extends="counter",
 		amount=500,
+		max_amount=999,
 		min_tick=9,
 		max_tick=16,
 		width=17,
@@ -229,6 +266,7 @@ local entity_classes={
 	},
 	xp_counter={
 		amount=500,
+		max_amount=1000,
 		extends="counter",
 		min_tick=18,
 		max_tick=32,
@@ -242,6 +280,7 @@ local entity_classes={
 		end
 	},
 	pop_text={
+		render_layer=7,
 		width=1,
 		height=1,
 		vy=-1.5,
@@ -268,6 +307,7 @@ local entity_classes={
 		end
 	},
 	plots={
+		render_layer=2,
 		width=31,
 		height=65,
 		init=function(self)
@@ -292,6 +332,7 @@ local entity_classes={
 		end
 	},
 	army={
+		render_layer=3,
 		init=function(self)
 			self.troops={}
 		end,
@@ -305,7 +346,7 @@ local entity_classes={
 					troop.y-=0.1
 					troop.battle_line=nil
 					if troop.y<28 then
-						commanders[ternary(commander.is_facing_left,1,2)].health.amount-=1
+						commanders[ternary(commander.is_facing_left,1,2)].health:add(-1)
 						freeze_and_shake_screen(0,5)
 						self:destroy_troop(troop)
 					end
@@ -347,6 +388,7 @@ local entity_classes={
 		end
 	},
 	menu={
+		render_layer=8,
 		width=11,
 		height=11,
 		is_visible=false,
@@ -408,7 +450,7 @@ local entity_classes={
 			draw_sprite(11,7,2,9,x,105)
 			draw_sprite(13,7,1,9,x+2,105,false,false,58)
 			draw_sprite(11,7,2,9,x+60,105,true)
-			if hint and self.hint_counter%80>40 then
+			if hint and self.hint_counter%60>30 then
 				print(hint,x+3.5,107.5,0)
 			else
 				print(text,x+3.5,107.5,0)
@@ -424,9 +466,21 @@ local entity_classes={
 	location_menu={
 		extends="menu",
 		draw=function(self)
-			local loc=self.menu_items[self.highlighted_index]
 			if self.is_visible then
+				local prev_choice=self.prev_choice
+				local loc=self.menu_items[self.highlighted_index]
 				self:render_pointer(loc.x,loc.y,4)
+				if self.action=="build" then
+					self:render_text(prev_choice[2],prev_choice[3],prev_choice[4])
+				elseif self.action=="upgrade" then
+					local location=self.menu_items[self.highlighted_index]
+					if location.building and location.building.is_alive then
+						local upgrade=location.building.upgrade_options[1+location.building.upgrades]
+						self:render_text(upgrade[1],upgrade[2],upgrade[3])
+					else
+						self:render_text("--")
+					end
+				end
 			end
 		end
 	},
@@ -463,7 +517,7 @@ local entity_classes={
 				end
 				-- take damage
 				if other.is_left_wall or other.is_right_wall then
-					commanders[ternary(other.is_left_wall,1,2)].health.amount-=10
+					commanders[ternary(other.is_left_wall,1,2)].health:add(-10)
 					freeze_and_shake_screen(0,5)
 					self:die()
 				end
@@ -474,7 +528,7 @@ local entity_classes={
 					local percent_offset=mid(-1,offset_y/max_offset,1)
 					local target_vy=1.2*percent_offset+0.6*self.vy
 					self.vy=target_vy
-					other.gold.amount+=50
+					other.gold:add(50)
 					spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
 						amount=50,
 						type="gold"
@@ -540,6 +594,7 @@ local entity_classes={
 		extends="building",
 		sprite=1,
 		health_bar_height={4,6,7},
+		upgrade_options={{"keep v2","+3 troop",200},{"keep v3","+5 troop",400},{"max upgrade"}},
 		on_trigger=function(self)
 			local i
 			for i=1,5 do
@@ -552,8 +607,9 @@ local entity_classes={
 		sprite=2,
 		health_bar_height={2,2,2},
 		offset_y=4,
+		upgrade_options={{"farm v2","+5 gold",200},{"farm v3","+10 gold",400},{"max upgrade"}},
 		on_trigger=function(self,other)
-			self.commander.gold.amount+=25
+			self.commander.gold:add(25)
 			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
 				amount=25,
 				type="gold"
@@ -564,8 +620,9 @@ local entity_classes={
 		extends="building",
 		sprite=3,
 		health_bar_height={3,4,5},
+		upgrade_options={{"inn v2","+5 health",200},{"inn v3","+10 health",400},{"max upgrade"}},
 		on_trigger=function(self,other)
-			self.commander.health.amount+=3
+			self.commander.health:add(3)
 			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
 				amount=3,
 				type="health"
@@ -661,6 +718,15 @@ function _update(is_paused)
 			del(entities,entity)
 		end
 	end
+	-- sort entities for rendering
+	local i
+	for i=1,#entities do
+		local j=i
+		while j>1 and is_rendered_on_top_of(entities[j-1],entities[j]) do
+			entities[j],entities[j-1]=entities[j-1],entities[j]
+			j-=1
+		end
+	end
 end
 
 -- local was_paused=false
@@ -741,6 +807,7 @@ function spawn_entity(class_name,x,y,args,skip_init)
 			platform_channel=0,
 			hit_channel=0,
 			hurt_channel=0,
+			render_layer=5,
 			invincibility_frames=0,
 			init=noop,
 			update=function(self)
@@ -869,6 +936,10 @@ function spawn_entity(class_name,x,y,args,skip_init)
 	end
 	-- return the new entity
 	return entity
+end
+
+function is_rendered_on_top_of(a,b)
+	return ternary(a.render_layer==b.render_layer,a.y+a.height/2>b.y+b.height/2,a.render_layer>b.render_layer)
 end
 
 function freeze_and_shake_screen(f,s)
