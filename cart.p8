@@ -149,6 +149,7 @@ local entity_classes={
 					if index==1 then
 						self.commander.build_menu:show()
 						self:hide()
+						sfx(11)
 					-- upgrade
 					elseif index==2 then
 						local location_menu=self.commander.location_menu
@@ -156,18 +157,24 @@ local entity_classes={
 						location_menu.prev_choice=item
 						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
 						self:hide()
+						sfx(11)
 					end
 				end
 			})
 			self.build_menu=spawn_entity("menu",x,63,{
 				commander=self,
-				menu_items={{4,"keep","+1 troop",100},{5,"farm","+3 gold",100},{6,"inn","+3 health",100},{7,"archers","short range",100},{8,"church","+1 health",100}},
+				menu_items={{4,"keep","makes troops",100},{5,"farm","generates gold",100},{6,"inn","grants xp",100},{7,"archers","shoots enemies",100},{8,"church","heals wounds",100}},
 				on_select=function(self,item,index)
-					self:hide()
-					local location_menu=self.commander.location_menu
-					location_menu.action="build"
-					location_menu.prev_choice=item
-					location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
+					if item[4] and item[4]<=self.commander.gold.amount then
+						self:hide()
+						local location_menu=self.commander.location_menu
+						location_menu.action="build"
+						location_menu.prev_choice=item
+						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
+						sfx(11)
+					else
+						sfx(12)
+					end
 				end
 			})
 			self.location_menu=spawn_entity("location_menu",x,63,{
@@ -178,18 +185,24 @@ local entity_classes={
 						if self.commander:build(self.prev_choice[2],self.prev_choice[4],location) then
 							self:hide()
 							self.commander.is_frozen=false
+							sfx(11)
+						else
+							sfx(12)
 						end
 					elseif self.action=="upgrade" then
 						if location.building and location.building.is_alive then
-							if  location.building.upgrades<2 and self.commander:upgrade(location.building) then
+							if location.building.upgrades<2 and self.commander:upgrade(location.building) then
 								self:hide()
 								self.commander.is_frozen=false
+								sfx(11)
+							else
+								sfx(12)
 							end
 						else
 							self:hide()
 							self.commander.is_frozen=false
+							sfx(14)
 						end
-
 					end
 				end
 			})
@@ -200,6 +213,7 @@ local entity_classes={
 				self.is_frozen=true
 				button_presses[self.player_num][4]=false
 				self.primary_menu:show()
+				sfx(13)
 			end
 			-- move vertically
 			if self.is_frozen then
@@ -208,6 +222,9 @@ local entity_classes={
 				self.move_y=ternary(buttons[self.player_num][3],1,0)-ternary(buttons[self.player_num][2],1,0)
 			end
 			self.vy=self.move_y
+			if self.vy!=0 and self.frames_alive%10==ternary(self.player_num==1,0,3) then
+				sfx(7+self.player_num)
+			end
 			self:apply_velocity()
 			-- keep in bounds
 			self.y=mid(level_bounds.top.y-5,self.y,level_bounds.bottom.y-self.height+5)
@@ -238,6 +255,7 @@ local entity_classes={
 				if location.building and location.building.is_alive then
 					location.building:die()
 				end
+				sfx(16)
 				location.building=spawn_entity(building_type,location.x-1,location.y-1,{
 					commander=self,
 					battle_line=location.battle_line
@@ -248,6 +266,7 @@ local entity_classes={
 		upgrade=function(self,building)
 			local cost=building.upgrade_options[building.upgrades+1][3]
 			if ((building.upgrades==0 and self.xp.level>=3) or (building.upgrades==1 and self.xp.level>=6)) and self.gold.amount>=cost then
+				sfx(16)
 				self.gold:add(-cost)
 				building.upgrades+=1
 				building.max_hit_points+=75
@@ -291,7 +310,7 @@ local entity_classes={
 	health_counter={
 		extends="counter",
 		amount=15,
-		displayed_amount=15,
+		displayed_amount=50,
 		max_amount=50,
 		min_tick=1,
 		max_tick=1,
@@ -347,7 +366,7 @@ local entity_classes={
 		max_tick=2,
 		width=16,
 		height=7,
-		level=1,
+		level=8,--1,
 		draw=function(self)
 			draw_sprite(24,27,11,3,self.x,self.y+1)
 			print(self.level,self.x+13.5,self.y+0.5,7)
@@ -452,6 +471,11 @@ local entity_classes={
 						if location.building and location.building.is_alive and contains_point(location.building,troop.x,troop.y,1) then
 							troop.x-=2*commander.facing_dir
 							location.building:damage(1)
+							troop.hits+=1
+							if troop.hits>5 then
+								self:destroy_troop(troop)
+							end
+							sfx(18)
 						end
 					end
 				end
@@ -474,7 +498,8 @@ local entity_classes={
 			add(self.troops,{
 				x=building.x+3+self.commander.facing_dir*(rnd(5)),
 				y=building.y+building.height/2+rnd_int(-4,3),
-				battle_line=building.battle_line
+				battle_line=building.battle_line,
+				hits=0
 			})
 		end,
 		destroy_troop=function(self,troop)
@@ -502,18 +527,22 @@ local entity_classes={
 				if button_presses[player_num][2] then
 					self.highlighted_index=ternary(self.highlighted_index==1,#self.menu_items,self.highlighted_index-1)
 					self.hint_counter=0
+					sfx(10)
 				end
 				if button_presses[player_num][3] then
 					self.highlighted_index=self.highlighted_index%#self.menu_items+1
 					self.hint_counter=0
+					sfx(10)
 				end
 				if button_presses[player_num][4] then
 					button_presses[player_num][4]=false
 					self:on_select(self.menu_items[self.highlighted_index],self.highlighted_index)
+					-- sfx(11)
 				end
 				if button_presses[player_num][5] then
 					self:hide()
 					self.commander.is_frozen=false
+					sfx(14)
 				end
 			end
 		end,
@@ -551,7 +580,7 @@ local entity_classes={
 			draw_sprite(11,7,2,9,x,105)
 			draw_sprite(13,7,1,9,x+2,105,false,false,58)
 			draw_sprite(11,7,2,9,x+60,105,true)
-			if hint and self.hint_counter%60>30 then
+			if hint and self.hint_counter%40>20 then
 				print(hint,x+3.5,107.5,0)
 			else
 				print(text,x+3.5,107.5,0)
@@ -605,10 +634,14 @@ local entity_classes={
 		end,
 		update=function(self)
 			if self.vx==0 and self.vy==0 and button_presses[1][0] and self.frames_alive>10 then
+				sfx(3)
 				local launch_to_player_1=(self.frames_alive%40<20)
 				self.vx=ternary(launch_to_player_1,-0.67,0.67)
 			end
 			self:apply_velocity(true)
+			if ball.vx!=0 and ball.vy==0 then
+				ball.vy=0.002
+			end
 		end,
 		draw=function(self)
 			if self.commander then
@@ -645,9 +678,9 @@ local entity_classes={
 					commander.health:add(-15)
 					freeze_and_shake_screen(0,5)
 					self:die()
-				end
+					sfx(6)
 				-- commander can bounce the ball in interesting ways
-				if other.is_commander then
+				elseif other.is_commander then
 					local offset_y=self.y+self.height/2-other.y-other.height/2+other.vy/2
 					local max_offset=other.height/2
 					local percent_offset=mid(-1,offset_y/max_offset,1)
@@ -665,6 +698,9 @@ local entity_classes={
 					})
 					self.commander=other
 					self.vx+=ternary(self.vx<0,-1,1)*0.01
+					sfx(4)
+				else
+					sfx(5)
 				end
 				-- stop moving / colliding
 				return true
@@ -704,8 +740,12 @@ local entity_classes={
 			self.invincibility_frames=15
 			if other.commander==self.commander then
 				self:on_trigger(other)
+				spawn_entity("trigger_effect",self.x,self.y,{
+					color=self.commander.colors[2]
+				})
 			elseif other.commander then
 				self:damage(20)
+				sfx(17)
 			end
 		end,
 		damage=function(self,amount)
@@ -741,6 +781,7 @@ local entity_classes={
 			for i=1,num_troops do
 				self.commander.army:spawn_troop(self)
 			end
+			sfx(19)
 		end
 	},
 	farm={
@@ -756,6 +797,7 @@ local entity_classes={
 				amount=gold,
 				type="gold"
 			})
+			sfx(7)
 		end
 	},
 	inn={
@@ -770,6 +812,7 @@ local entity_classes={
 				amount=xp,
 				type="xp"
 			})
+			sfx(20)
 		end
 	},
 	archers={
@@ -810,6 +853,7 @@ local entity_classes={
 				frames_to_death=30,
 				color=8
 			})
+			sfx(21)
 		end
 	},
 	range_indicator={
@@ -830,6 +874,7 @@ local entity_classes={
 				amount=health,
 				type="health"
 			})
+			sfx(22)
 		end
 	},
 	spark_explosion={
@@ -888,14 +933,18 @@ local entity_classes={
 		update=function(self)
 			if button_presses[self.player_num][2] then
 				self.choice=ternary(self.choice==0,2,self.choice-1)
+				sfx(0)
 			elseif button_presses[self.player_num][3] then
 				self.choice=(self.choice+1)%3
+				sfx(0)
 			end
 		end,
 		draw=function(self)
 			-- self:draw_outline(8)
 			-- draw arrows
+			pal(7,ternary(buttons[self.player_num][2],13,7))
 			draw_sprite(117,0,11,6,self.x+14,self.y,false,true)
+			pal(7,ternary(buttons[self.player_num][3],13,7))
 			draw_sprite(117,0,11,6,self.x+14,self.y+30)
 			local primary_color=({12,10,8})[self.choice+1]
 			local secondary_color=({5,4,2})[self.choice+1]
@@ -925,6 +974,8 @@ local entity_classes={
 			local class_choices={"witch","thief","knight"}
 			if button_presses[1][0] and self.frames_alive>15 then
 				button_presses[1][0]=false
+				sfx(1)
+				sfx(2)
 				init_gameplay_scene(class_choices[self.selectors[1].choice+1],class_choices[self.selectors[2].choice+1])
 				self.selectors[1]:die()
 				self.selectors[2]:die()
@@ -944,6 +995,9 @@ local entity_classes={
 		update=function(self)
 			local x=ternary(self.winning_player_num==1,109,18)
 			if self.frames_alive<100 then
+				if self.frames_alive%3==0 then
+					sfx(18)
+				end
 				spawn_entity("spark_explosion",x+rnd_int(-8,8),rnd_int(18,32),{
 					min_angle=20,
 					max_angle=160,
@@ -953,6 +1007,7 @@ local entity_classes={
 					num_sparks=4
 				})
 			elseif self.frames_alive==100 then
+				sfx(17)
 				spawn_entity("spark_explosion",x,24,{
 					color=7,
 					speed=4,
@@ -977,6 +1032,20 @@ local entity_classes={
 				draw_sprite(35,31,7,9,60,65)
 				print("to restart",43.5,76.5,7)
 			end
+		end
+	},
+	trigger_effect={
+		frames_to_death=7,
+		vy=-5,
+		render_layer=7,
+		init=function(self)
+		end,
+		update=function(self)
+			self.vy=min(0,self.vy+1)
+			self:apply_velocity()
+		end,
+		draw=function(self)
+			rectfill(self.x+0.5,self.y+0.5,self.x+6.5,self.y+6.5-self.frames_alive,self.color)
 		end
 	}
 }
@@ -1053,6 +1122,7 @@ function _update(is_paused)
 	if game_end_screen and game_end_screen.frames_alive>185 and button_presses[1][0] then
 		button_presses[1][0]=false
 		init_character_select_scene()
+		sfx(1)
 	end
 	-- end the game
 	if commanders and not game_end_screen then
@@ -1167,6 +1237,8 @@ function init_game_end_scene(winning_player_num)
 	game_end_screen=spawn_entity("game_end_screen",0,0,{
 		winning_player_num=winning_player_num
 	})
+	commanders[1].army.troops={}
+	commanders[2].army.troops={}
 	if ball then
 		ball:despawn()
 		ball=nil
@@ -1537,3 +1609,27 @@ d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555554567
 800000088000000880000008555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555589ab
 8888888888888888888888885555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555cdef
+__sfx__
+010b00000053500500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
+0108000024155281452b135281352b155301603015130111001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100
+01060000246202462123621226111f6111b61116611116110c6110661502615016150060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600
+010a00002456024531245212451124511005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
+010800001855018531185211852118055280552b0502b0312b0212b01100500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
+010800000c5500c5210c5110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0105000030650246410c63130650246411863118631186210c6210c6210c6210c6110c5320c5420c5220c51200600006000060000600006000060000600006000060000600006000060000600006000060000600
+0108000018055280552b0502b0312b0212b0110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010500000701500000000000000008015000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010500000501500000000000000006015000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010900001c05500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+011000002405500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010900000002500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010800002002024051240110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010800002402020051200110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+010d00000060008625146252162500600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600
+010800000000000600086250000014625146251462500000000002162500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000300002764018642216521c61224652186521c6220e642126320f6300e6200d6100e63008620066200561005620046100261002610016100060000600006000060000600006000060000600006000060000600
+0002000012610176200a6200d61003610036000460003600046000060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600
+010b00001823000200182302423024221242120020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200
+01100000181401c145181251c15500100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100
+010800002443518415244351841524435244212441124411084000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400
+010b00001852218532185421854218532185221851200500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
