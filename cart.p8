@@ -5,19 +5,8 @@ __lua__
 --[[
 
 todo:
-
-	ball gradually speeds up
-	the game ends when a commander reaches 0 hp
-		castle is destroyed
-	sound effects
-	main menu
-	character select
+	sound when building is destroyed
 	reminders / tips / tutorials
-	effects when:
-		building constructed
-		building destroyed
-		building triggered
-		building upgraded
 	repair option
 
 
@@ -117,6 +106,13 @@ local entity_classes={
 		platform_channel=2,
 		is_commander=true,
 		is_frozen=false,
+		move_speed=1,
+		ball_speed=1,
+		troop_move_speed=1,
+		bonus_troops_per_keep=0,
+		aftertouch_frames=0,
+		troop_damage_mult=1,
+		ball_damage_mult=1,
 		init=function(self)
 			spawn_entity("spark_explosion",self.x+self.width/2,self.y+self.height/2,{
 				color=self.colors[2],
@@ -208,6 +204,7 @@ local entity_classes={
 			})
 		end,
 		update=function(self)
+			decrement_counter_prop(self,"aftertouch_frames")
 			-- activate the menu
 			if not self.is_frozen and button_presses[self.player_num][4] then
 				self.is_frozen=true
@@ -221,11 +218,14 @@ local entity_classes={
 			else
 				self.move_y=ternary(buttons[self.player_num][3],1,0)-ternary(buttons[self.player_num][2],1,0)
 			end
-			self.vy=self.move_y
+			self.vy=self.move_speed*self.move_y
 			if self.vy!=0 and self.frames_alive%10==ternary(self.player_num==1,0,3) then
 				sfx(7+self.player_num)
 			end
 			self:apply_velocity()
+			if self.aftertouch and self.aftertouch_frames>0 and self.vy!=0 and ball then
+				ball.vy+=ternary(self.vy>0,0.01,-0.01)
+			end
 			-- keep in bounds
 			self.y=mid(level_bounds.top.y-5,self.y,level_bounds.bottom.y-self.height+5)
 		end,
@@ -260,6 +260,10 @@ local entity_classes={
 					commander=self,
 					battle_line=location.battle_line
 				})
+				if self.class_name=="knight" and self.xp.level>=2 then
+					location.building.max_hit_points+=35
+					location.building.hit_points+=35
+				end
 				return location.building
 			end
 		end,
@@ -273,22 +277,79 @@ local entity_classes={
 				building.hit_points+=75
 				return true
 			end
-		end
+		end,
+		on_level_up=noop
 	},
 	witch={
 		extends="commander",
 		colors={13,12,12,4,5},
-		sprite=0
+		sprite=0,
+		on_level_up=function(self,level)
+			if level==2 then
+			elseif level==4 then
+			elseif level==5 then
+			elseif level==7 then
+			elseif level==8 then
+			elseif level==9 then
+			end
+		end
 	},
 	thief={
 		extends="commander",
 		colors={9,10,10,4,4},
-		sprite=1
+		sprite=1,
+		on_level_up=function(self,level)
+			if level==2 then
+				self.move_speed=1.6
+				self.ball_speed=1.6
+				return {"+ball speed","+move speed"}
+			elseif level==4 then
+				self.stealing=true
+				return {"steal gold per","damaged building"}
+			elseif level==5 then
+				self.aftertouch=true
+				return {"aftertouch","ball trajectory"}
+			elseif level==7 then
+				self.ball_speed=2.0
+				return {"++ball speed"}
+			elseif level==8 then
+				self.double_triggers=true
+				return {"your buildings","trigger twice"}
+			elseif level==9 then
+			end
+		end
 	},
 	knight={
 		extends="commander",
 		colors={8,8,14,15,2},
-		sprite=2
+		sprite=2,
+		on_level_up=function(self,level)
+			if level==2 then
+				local location
+				for location in all(self.plots.locations) do
+					if location.building then
+						location.building.max_hit_points+=35
+						location.building.hit_points+=35
+					end
+				end
+				return {"+building hp"}
+			elseif level==4 then
+				self.move_speed=0.65
+				self.y-=5
+				self.height+=10
+				return {"+paddle size","-move speed"}
+			elseif level==5 then
+				self.troop_move_speed=1.75
+				return {"+troop move","speed"}
+			elseif level==7 then
+				self.bonus_troops_per_keep=2
+				return {"keeps: +2 troops","per hit"}
+			elseif level==8 then
+				self.troop_damage_mult=2
+				self.ball_damage_mult=2
+				return {"x2 troop damage","x2 ball damage"}
+			end
+		end
 	},
 	counter={
 		render_layer=9,
@@ -309,7 +370,7 @@ local entity_classes={
 	},
 	health_counter={
 		extends="counter",
-		amount=15,
+		amount=50,
 		displayed_amount=50,
 		max_amount=50,
 		min_tick=1,
@@ -339,7 +400,7 @@ local entity_classes={
 	},
 	gold_counter={
 		extends="counter",
-		amount=800,
+		amount=750,
 		max_amount=999,
 		min_tick=9,
 		max_tick=16,
@@ -366,7 +427,7 @@ local entity_classes={
 		max_tick=2,
 		width=16,
 		height=7,
-		level=8,--1,
+		level=7,
 		draw=function(self)
 			draw_sprite(24,27,11,3,self.x,self.y+1)
 			print(self.level,self.x+13.5,self.y+0.5,7)
@@ -389,6 +450,35 @@ local entity_classes={
 					num_sparks=10,
 					speed=3
 				})
+				sfx(23)
+				local text=self.commander:on_level_up(self.level) or {}
+				if self.level==3 then
+					text={"lvl 2 buildings","unlocked"}
+				elseif self.level==6 then
+					text={"lvl 3 buildings","unlocked"}
+				end
+				spawn_entity("level_up_effect",ternary(self.commander.is_facing_left,64,0),12,{
+					commander=self.commander,
+					line_1=text[1],
+					line_2=text[2]
+				})
+			end
+		end
+	},
+	level_up_effect={
+		width=63,
+		height=18,
+		frames_to_death=200,
+		draw=function(self)
+			pal(3,self.commander.colors[5])
+			pal(11,self.commander.colors[2])
+			local dy=ternary(self.line_2,0,ternary(self.line_1,4,8))
+			draw_sprite(45,27,46,6,self.x+9,self.y+dy)
+			if self.line_1 then
+				print(self.line_1,self.x+32.5-2*#self.line_1,self.y+7.5+dy,7)
+			end
+			if self.line_2 then
+				print(self.line_2,self.x+32.5-2*#self.line_2,self.y+13.5+dy,7)
 			end
 		end
 	},
@@ -456,7 +546,7 @@ local entity_classes={
 				if ball and ball.is_alive and ball.commander and ball.commander!=self.commander and contains_point(ball,troop.x,troop.y,1) then
 					self:destroy_troop(troop)
 				elseif (commander.is_facing_left and troop.x<=18) or (not commander.is_facing_left and troop.x>=108) then
-					troop.y-=0.1
+					troop.y-=commander.troop_move_speed*0.1
 					troop.battle_line=nil
 					if troop.y<28 then
 						commanders[ternary(commander.is_facing_left,1,2)].health:add(-1)
@@ -464,13 +554,13 @@ local entity_classes={
 						self:destroy_troop(troop)
 					end
 				else
-					troop.x+=0.1*commander.facing_dir
+					troop.x+=commander.troop_move_speed*0.1*commander.facing_dir
 					-- check for collisions with buildings
 					local location
 					for location in all(commanders[commander.opposing_player_num].plots.locations) do
 						if location.building and location.building.is_alive and contains_point(location.building,troop.x,troop.y,1) then
 							troop.x-=2*commander.facing_dir
-							location.building:damage(1)
+							location.building:damage(commander.troop_damage_mult)
 							troop.hits+=1
 							if troop.hits>5 then
 								self:destroy_troop(troop)
@@ -629,6 +719,7 @@ local entity_classes={
 		collision_indent=0.5,
 		hit_channel=1, -- buildings
 		collision_channel=1 + 2, -- level bounds + commanders
+		ball_speed=1,
 		init=function(self)
 			self.frames_alive+=ternary(rnd()<0.5,20,0)
 		end,
@@ -638,10 +729,10 @@ local entity_classes={
 				local launch_to_player_1=(self.frames_alive%40<20)
 				self.vx=ternary(launch_to_player_1,-0.67,0.67)
 			end
-			self:apply_velocity(true)
-			if ball.vx!=0 and ball.vy==0 then
-				ball.vy=0.002
-			end
+			self:apply_velocity(self.ball_speed)
+			-- if ball.vx!=0 and ball.vy==0 then
+			-- 	ball.vy=0.002
+			-- end
 		end,
 		draw=function(self)
 			if self.commander then
@@ -675,7 +766,8 @@ local entity_classes={
 				-- take damage
 				if other.is_left_wall or other.is_right_wall then
 					local commander=commanders[ternary(other.is_left_wall,1,2)]
-					commander.health:add(-15)
+					local other_commander=commanders[ternary(other.is_left_wall,2,1)]
+					commander.health:add(-15*other_commander.ball_damage_mult)
 					freeze_and_shake_screen(0,5)
 					self:die()
 					sfx(6)
@@ -698,6 +790,8 @@ local entity_classes={
 					})
 					self.commander=other
 					self.vx+=ternary(self.vx<0,-1,1)*0.01
+					self.ball_speed=other.ball_speed
+					other.aftertouch_frames=50
 					sfx(4)
 				else
 					sfx(5)
@@ -719,6 +813,7 @@ local entity_classes={
 		max_hit_points=100,
 		show_health_bar_frames=0,
 		hurt_channel=1, -- buildings
+		effect_offset=0,
 		update=function(self)
 			decrement_counter_prop(self,"show_health_bar_frames")
 		end,
@@ -740,11 +835,24 @@ local entity_classes={
 			self.invincibility_frames=15
 			if other.commander==self.commander then
 				self:on_trigger(other)
+				if self.commander.double_triggers then
+					self.effect_offset=7
+					self:on_trigger(other)
+					self.effect_offset=0
+				end
 				spawn_entity("trigger_effect",self.x,self.y,{
 					color=self.commander.colors[2]
 				})
 			elseif other.commander then
-				self:damage(20)
+				self:damage(other.commander.ball_damage_mult*20)
+				if other.commander.stealing then
+					self.commander.gold:add(-5)
+					other.commander.gold:add(5)
+					spawn_entity("pop_text",other.commander.x+other.commander.width/2,other.commander.y,{
+						amount=5,
+						type="gold"
+					})
+				end
 				sfx(17)
 			end
 		end,
@@ -776,7 +884,7 @@ local entity_classes={
 		health_bar_height={4,6,7},
 		upgrade_options={{"keep v2","+3 troop",200},{"keep v3","+7 troop",300},{"max upgrade"}},
 		on_trigger=function(self)
-			local num_troops=({1,3,7})[self.upgrades+1]
+			local num_troops=({1,3,7})[self.upgrades+1]+self.commander.bonus_troops_per_keep
 			local i
 			for i=1,num_troops do
 				self.commander.army:spawn_troop(self)
@@ -793,7 +901,7 @@ local entity_classes={
 		on_trigger=function(self,other)
 			local gold=({25,75,200})[self.upgrades+1]
 			self.commander.gold:add(gold)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
 				amount=gold,
 				type="gold"
 			})
@@ -808,7 +916,7 @@ local entity_classes={
 		on_trigger=function(self,other)
 			local xp=({10,30,50})[self.upgrades+1]
 			self.commander.xp:add(xp)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
 				amount=xp,
 				type="xp"
 			})
@@ -870,7 +978,7 @@ local entity_classes={
 		on_trigger=function(self,other)
 			local health=({1,2,4})[self.upgrades+1]
 			self.commander.health:add(health)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
+			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
 				amount=health,
 				type="health"
 			})
@@ -929,13 +1037,15 @@ local entity_classes={
 		width=40,
 		height=36,
 		render_layer=9,
-		choice=0,
+		choice=1,
 		update=function(self)
 			if button_presses[self.player_num][2] then
-				self.choice=ternary(self.choice==0,2,self.choice-1)
+				-- self.choice=ternary(self.choice==0,2,self.choice-1)
+				self.choice=ternary(self.choice==1,2,1)
 				sfx(0)
 			elseif button_presses[self.player_num][3] then
-				self.choice=(self.choice+1)%3
+				-- self.choice=(self.choice+1)%3
+				self.choice=ternary(self.choice==1,2,1)
 				sfx(0)
 			end
 		end,
@@ -1275,17 +1385,18 @@ function spawn_entity(class_name,x,y,args,skip_init)
 			update=function(self)
 				self:apply_velocity()
 			end,
-			apply_velocity=function(self)
+			apply_velocity=function(self,speed_mult)
+				speed_mult=speed_mult or 1
 				-- move in discrete steps if we might collide with something
 				if self.collision_channel>0 then
 					local max_move_x=min(self.collision_indent,self.width-2*self.collision_indent)-0.1
 					local max_move_y=min(self.collision_indent,self.height-2*self.collision_indent)-0.1
-					local steps=max(1,ceil(max(abs(self.vx/max_move_x),abs(self.vy/max_move_y))))
+					local steps=max(1,ceil(max(abs((self.vx*speed_mult)/max_move_x),abs((self.vy*speed_mult)/max_move_y))))
 					local i
 					for i=1,steps do
 						-- apply velocity
-						self.x+=self.vx/steps
-						self.y+=self.vy/steps
+						self.x+=(self.vx*speed_mult)/steps
+						self.y+=(self.vy*speed_mult)/steps
 						-- check for collisions
 						if self:check_for_collisions() then
 							return
@@ -1293,8 +1404,8 @@ function spawn_entity(class_name,x,y,args,skip_init)
 					end
 				-- just move all at once
 				else
-					self.x+=self.vx
-					self.y+=self.vy
+					self.x+=self.vx*speed_mult
+					self.y+=self.vy*speed_mult
 				end
 			end,
 			-- hit functions
@@ -1633,3 +1744,4 @@ __sfx__
 01100000181401c145181251c15500100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100
 010800002443518415244351841524435244212441124411084000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400
 010b00001852218532185421854218532185221851200500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
+01080000183551c3551f3551c3551f355213552435526355283553035030331303110030000300003000030000300003000030000300003000030000300003000030000300003000030000300003000030000300
