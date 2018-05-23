@@ -104,6 +104,7 @@ local screen_shake_frames
 local entities
 local commanders
 local ball
+local game_end_screen
 local buttons={{},{}}
 local button_presses={{},{}}
 
@@ -257,17 +258,17 @@ local entity_classes={
 	},
 	witch={
 		extends="commander",
-		colors={13,12,12,4},
+		colors={13,12,12,4,5},
 		sprite=0
 	},
 	thief={
 		extends="commander",
-		colors={9,10,10,4},
+		colors={9,10,10,4,4},
 		sprite=1
 	},
 	knight={
 		extends="commander",
-		colors={8,8,14,15},
+		colors={8,8,14,15,2},
 		sprite=2
 	},
 	counter={
@@ -289,8 +290,8 @@ local entity_classes={
 	},
 	health_counter={
 		extends="counter",
-		amount=50,
-		displayed_amount=50,
+		amount=15,
+		displayed_amount=15,
 		max_amount=50,
 		min_tick=1,
 		max_tick=1,
@@ -603,7 +604,7 @@ local entity_classes={
 			self.frames_alive+=ternary(rnd()<0.5,20,0)
 		end,
 		update=function(self)
-			if self.vx==0 and self.vy==0 and button_presses[1][0] then
+			if self.vx==0 and self.vy==0 and button_presses[1][0] and self.frames_alive>10 then
 				local launch_to_player_1=(self.frames_alive%40<20)
 				self.vx=ternary(launch_to_player_1,-0.67,0.67)
 			end
@@ -922,29 +923,9 @@ local entity_classes={
 		end,
 		update=function(self)
 			local class_choices={"witch","thief","knight"}
-			local player_1_class=class_choices[self.selectors[1].choice+1]
-			local player_2_class=class_choices[self.selectors[2].choice+1]
-			if button_presses[1][0] then
+			if button_presses[1][0] and self.frames_alive>15 then
 				button_presses[1][0]=false
-				commanders={
-					spawn_entity(player_1_class,level_bounds.left.x+6,60,{
-						player_num=1,
-						opposing_player_num=2,
-						facing_dir=1,
-						is_facing_left=false
-					}),
-					spawn_entity(player_2_class,level_bounds.right.x-8,60,{
-						player_num=2,
-						opposing_player_num=1,
-						facing_dir=-1,
-						is_facing_left=true
-					})
-				}
-				if player_1_class==player_2_class then
-					local commander=commanders[rnd_int(1,2)]
-					commander.colors={3,11,11,commander.colors[4]}
-				end
-				ball=spawn_entity("ball",62,66)
+				init_gameplay_scene(class_choices[self.selectors[1].choice+1],class_choices[self.selectors[2].choice+1])
 				self.selectors[1]:die()
 				self.selectors[2]:die()
 				self:die()
@@ -958,6 +939,45 @@ local entity_classes={
 			draw_sprite(35,31,7,9,self.x+11.5,self.y+6)
 			-- self:draw_outline(8)
 		end
+	},
+	game_end_screen={
+		update=function(self)
+			local x=ternary(self.winning_player_num==1,109,18)
+			if self.frames_alive<100 then
+				spawn_entity("spark_explosion",x+rnd_int(-8,8),rnd_int(18,32),{
+					min_angle=20,
+					max_angle=160,
+					color=6,--rnd_int(8,10),
+					gravity=-0.02,
+					speed=1,
+					num_sparks=4
+				})
+			elseif self.frames_alive==100 then
+				spawn_entity("spark_explosion",x,24,{
+					color=7,
+					speed=4,
+					num_sparks=30,
+					variation=0.7,
+					frames_to_death=40
+				})
+			end
+		end,
+		draw=function(self)
+			if self.frames_alive>100 then
+				pal(11,commanders[1].colors[2])
+				pal(3,commanders[1].colors[5])
+				draw_sprite(98,ternary(self.winning_player_num==1,25,31),30,6,3,22)
+				pal(11,commanders[2].colors[2])
+				pal(3,commanders[2].colors[5])
+				draw_sprite(98,ternary(self.winning_player_num==2,25,31),30,6,93,22)
+			end
+			if self.frames_alive>180 then
+				print("press",54.5,59.5,7)
+				pal(1,0)
+				draw_sprite(35,31,7,9,60,65)
+				print("to restart",43.5,76.5,7)
+			end
+		end
 	}
 }
 
@@ -965,24 +985,7 @@ function _init()
 	game_frames=0
 	freeze_frames=0
 	screen_shake_frames=0
-	entities={}
-	-- commanders={
-	-- 	spawn_entity("knight",level_bounds.left.x+6,60,{
-	-- 		player_num=1,
-	-- 		opposing_player_num=2,
-	-- 		facing_dir=1,
-	-- 		is_facing_left=false
-	-- 	}),
-	-- 	spawn_entity("thief",level_bounds.right.x-6-entity_classes.commander.width,60,{
-	-- 		player_num=2,
-	-- 		opposing_player_num=1,
-	-- 		facing_dir=-1,
-	-- 		is_facing_left=true
-	-- 	})
-	-- }
-	commanders=nil
-	ball=nil--spawn_entity("ball",62,66)
-	spawn_entity("character_select_screen")
+	init_character_select_scene()
 end
 
 -- local skip_frames=0
@@ -1046,6 +1049,19 @@ function _update(is_paused)
 			end
 		end
 	end
+	-- restart the game
+	if game_end_screen and game_end_screen.frames_alive>185 and button_presses[1][0] then
+		button_presses[1][0]=false
+		init_character_select_scene()
+	end
+	-- end the game
+	if commanders and not game_end_screen then
+		if commanders[1].health.amount<=0 then
+			init_game_end_scene(2)
+		elseif commanders[2].health.amount<=0 then
+			init_game_end_scene(1)
+		end
+	end
 	-- remove dead entities
 	for entity in all(entities) do
 		if not entity.is_alive then
@@ -1086,8 +1102,8 @@ function _draw()
 	draw_sprite(24,15,4,12,123,100,true)
 	draw_sprite(28,15,1,12,4,100,false,false,119)
 	-- draw castles
-	draw_sprite(29,7,29,20,4,11)
-	draw_sprite(29,7,29,20,94,11)
+	draw_sprite(ternary(game_end_screen and game_end_screen.winning_player_num==2 and game_end_screen.frames_alive>100,58,29),7,29,20,4,11)
+	draw_sprite(ternary(game_end_screen and game_end_screen.winning_player_num==1 and game_end_screen.frames_alive>100,58,29),7,29,20,94,11)
 	-- draw drawbridges
 	draw_sprite(5,18,7,5,14,31)
 	draw_sprite(5,18,7,5,104,31)
@@ -1114,6 +1130,46 @@ function _draw()
 	for entity in all(entities) do
 		entity:draw()
 		pal()
+	end
+end
+
+function init_character_select_scene()
+	entities={}
+	commanders=nil
+	game_end_screen=nil
+	ball=nil
+	spawn_entity("character_select_screen")
+end
+
+function init_gameplay_scene(player_1_class,player_2_class)
+	commanders={
+		spawn_entity(player_1_class,level_bounds.left.x+6,60,{
+			player_num=1,
+			opposing_player_num=2,
+			facing_dir=1,
+			is_facing_left=false
+		}),
+		spawn_entity(player_2_class,level_bounds.right.x-8,60,{
+			player_num=2,
+			opposing_player_num=1,
+			facing_dir=-1,
+			is_facing_left=true
+		})
+	}
+	if player_1_class==player_2_class then
+		local commander=commanders[rnd_int(1,2)]
+		commander.colors={3,11,11,commander.colors[4],3}
+	end
+	ball=spawn_entity("ball",62,66)
+end
+
+function init_game_end_scene(winning_player_num)
+	game_end_screen=spawn_entity("game_end_screen",0,0,{
+		winning_player_num=winning_player_num
+	})
+	if ball then
+		ball:despawn()
+		ball=nil
 	end
 end
 
@@ -1249,6 +1305,9 @@ function spawn_entity(class_name,x,y,args,skip_init)
 					self:on_death()
 				end
 			end,
+			despawn=function(self)
+				self.is_alive=false
+			end,
 			on_death=noop
 		}
 	end
@@ -1358,10 +1417,10 @@ __gfx__
 080c080c080c1111111001b100111111101bbb10011111001bbb100111110001b1001b101b11b101b11b101b11b101b11b101b15555555555555500000700000
 01111111110200000000011100001110001111100000000011111001000100011100110001111000111100011110001111000115555555555555555555555555
 1677777776101110000111111111000000100000000000000000000000000000000000000000000000000000003bb003bb3bbbb3bbbbbb3bbbb03bb03bb00005
-1777777777116761111777777777100000100000000000000000100000000000000000000000000000000000003bb003bb03bb0003bb03bb003b3bb03bb00005
+1777777777116761111777777777100000100000000000000000100000000000000000000000000000000000003bb003bb03bb0003bb03bb03bb3bb03bb00005
 17777777771177711d6777767776100001110000000000000000100000000000000000000000000000000000003bb003bb03bb0003bb03bb00003bb03bb00005
 17777777771177711d777777d661100001110000000000000001110000000000000000000000000000000000003bb3b3bb03bb0003bb03bb00003bbbbbb00005
-17777777771177711d7777671111000011111000000010000001110000000000000000000000000000000000003bbbbbbb03bb0003bb03bbb03b3bb03bb00005
+17777777771177711d7777671111000011111000000010000001110000000000000000000000000000000000003bbbbbbb03bb0003bb03bbb3bb3bb03bb00005
 17777777771177711d7677d610000000111110000000100000111110000000000000000000000000000000000003bb3bb03bbbb003bb003bbbb03bb03bb00005
 1777777777117771111166d100000001111111000001110000111110000000000000000000000001000000000003bbbbbb3bb03bb3bbbb3bbbbb3bbbbb000005
 1777777777116761000011100000000111111100000111000111111100000000000000000000001100000000000003bb003bb03bb03bb03bb0003bb000000005
@@ -1375,20 +1434,20 @@ bb333114222400888009aaa544444000111110011111111111111110000001111100111111111111
 b3333312444200080000aa052444400011111111111111111111111000000111111111111111111111110003bbbbb3bb3b3bb03bb03bb3bbb3bbbbbb003bb005
 00000000000000000003b0002222200011111111111111111111111000000111111111111111111111110003bb3bb3bb03bbb03bb03bbb3bb3bb03bb003bb005
 00000000000000000003bb001222200011111111111111111111111000000111111111111111111111110003bb3bb3bb003bb3bbbb03bbbb03bb03bb003bb005
-0000000000000000000100bb11111000111111111211121111111110000001111111112111211111111100055555555555555555555555555555555555555555
-00000000000000000001000001111000111111111222221111111110000001111111112222211111111100055555555555555555555555555555555555555555
-00000000000600000061600070070707000e0e0ee0b003bb003bb3bbbb3bb003bb3bb00003bbbb003bbbb03bbbbb555555555555555555555555555555555555
-0000000006ddd6006dd1dd60700757070000e00e0ebb03bb003bb03bb03bbb03bb3bb0003bb03bb3bb03bb3bb000555555555555555555555555555555555555
-000600006ddddd606ddddd6077007007705e0e0ee0bbb3bb003bb03bb03bb3b3bb3bb0003bb03bb3bbbb003bb000555555555555555555555555555555555555
-06ddd60066d6d66066d6d66000000000000e0e0e00bb03bb3b3bb03bb03bb3b3bb3bb0003bb03bb003bbbb3bbb00555555555555555555555555555555555555
-06d6d6000666660066666660000000111110003000b003bbbbbbb03bb03bb03bbb3bb0003bbb3bb3bb03bb3bb000555555555555555555555555555555555555
-0666660003bbbe0003bbbe0000000111111001110055553bb3bb03bbbb3bb003bb3bbbbb03bbbb003bbbb03bbbbb555555555555555555555555555555555555
-03bbbe000dd666000dd666000000001111101777103bb0003bbbbb3bb03bb3bbbbb3bb000003bb03bb3bbbbb5555555555555555555555555555555555555555
-0666660003bbbe0003bbbe000000000000017777713bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb5555555555555555555555555555555555555555
-06dd660006666600066666000001111111117777713bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb5555555555555555555555555555555555555555
-0666660006616600066166000011111111117777713bb0003bbb003bbbbbb3bbb003bb000003bb03bb3bbbbb5555555555555555555555555555555555555555
-0d616d000d616d000d616d000001111111111777113bb0003bb00003bbbb03bb0003bb000003bbb3bb3bb0005555555555555555555555555555555555555555
-0000000000000000000000000011111111111111113bbbbb3bbbbb003bb003bbbbb3bbbbb0003bbbb03bb0005555555555555555555555555555555555555555
+0000000000000000000100bb111110001111111112111211111111100000011111111121112111111111000555555555550003bb003bb3bbbb3bb003bb03bb00
+000000000000000000010000011110001111111112222211111111100000011111111122222111111111000555555555550003bb003bb03bb03bbb03bb03bb00
+00000000000600000061600070070707000e0e0ee0b003bb0003bbbbb3bb03bb3bbbbb3bb000003bb03bb3bbbbb55555550003bb003bb03bb03bb3b3bb03bb00
+0000000006ddd6006dd1dd60700757070000e00e0ebb03bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb55555550003bb3b3bb03bb03bb3b3bb03bb00
+000600006ddddd606ddddd6077007007705e0e0ee0bbb3bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb55555550003bbbbbbb03bb03bb03bbb000000
+06ddd60066d6d66066d6d66000000000000e0e0e00bb03bb0003bbb003bbbbbb3bbb003bb000003bb03bb3bbbbb555555500003bb3bb03bbbb3bb003bb03bb00
+06d6d6000666660066666660000000111110003000b003bb0003bb00003bbbb03bb0003bb000003bbb3bb3bb00055555553bb00003bbbb003bbbb03bbbbb03bb
+0666660003bbbe0003bbbe000000011111100111005553bbbbb3bbbbb003bb003bbbbb3bbbbb0003bbbb03bb00055555553bb0003bb03bb3bb03bb3bb00003bb
+03bbbe000dd666000dd66600000000111110177710555555555555555555555555555555555555555555555555555555553bb0003bb03bb3bbbb003bb00003bb
+0666660003bbbe0003bbbe00000000000001777771555555555555555555555555555555555555555555555555555555553bb0003bb03bb003bbbb3bbb0003bb
+06dd66000666660006666600000111111111777771555555555555555555555555555555555555555555555555555555553bb0003bbb3bb3bb03bb3bb0000000
+066666000661660006616600001111111111777771555555555555555555555555555555555555555555555555555555553bbbbb03bbbb003bbbb03bbbbb03bb
+0d616d000d616d000d616d0000011111111117771155555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000000000000000000111111111111111155555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000001111111111011111055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000001111111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000000111111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
