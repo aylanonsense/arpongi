@@ -4,61 +4,6 @@ __lua__
 
 --[[
 
-todo:
-	sound when building is destroyed
-	reminders / tips / tutorials
-	repair option
-
-
-	menu items are greyed out when unuseable
-	gain xp
-	leveling up
-
-
-per paddle hit:
-	+40 gold
-	+15 xp
-
-per ball hit:
-	-20 building hp
-
-player levels:
-	lvl 1	3 hits
-	lvl 2	8 hits
-	lvl 3	14 hits
-	lvl 4	21 hits
-	lvl 5	29
-	lvl 6	
-	lvl 7	50 hits
-	lvl 8	
-	lvl 9	90 hits
-
-buildings:
-	base attributes:
-		lvl 1	100 gold	100 hp
-		lvl 2	200 gold	175 hp
-		lvl 3	300 gold	250 hp
-	farm:
-		lvl 1	+25 gold
-		lvl 2	+75 gold
-		lvl 3	+200 gold
-	keep:
-		lvl 1	+1 troop
-		lvl 2	+3 troops
-		lvl 3	+7 troops
-	inn:
-		lvl 1	+1 health
-		lvl 2	+2 health
-		lvl 3	+4 health
-	[academy]:
-		lvl 1	+10 xp
-		lvl 2	+25 xp
-		lvl 3	+55 xp
-	[archery range]:
-		lvl 1	small area
-		lvl 2	wide area
-		lvl 3	massive area
-
 render layers:
 	2:	plots/grass
 	3:	troops
@@ -73,6 +18,7 @@ platform channels:
 
 hurt channels:
 	1:	buildings
+
 ]]
 
 -- convenient no-op function that does nothing
@@ -101,11 +47,12 @@ local entity_classes={
 	commander={
 		width=2,
 		height=15,
+		mana_regen_rate=1,
 		collision_indent=0.5,
 		move_y=0,
 		platform_channel=2,
 		is_commander=true,
-		is_frozen=false,
+		-- is_frozen=false,
 		move_speed=1,
 		ball_speed=1,
 		troop_move_speed=1,
@@ -114,28 +61,19 @@ local entity_classes={
 		troop_damage_mult=1,
 		ball_damage_mult=1,
 		init=function(self)
-			spawn_entity("spark_explosion",self.x+self.width/2,self.y+self.height/2,{
+			spawn_entity("spark_explosion",self:center_x(),self:center_y(),{
 				color=self.colors[2],
 				speed=4,
 				num_sparks=30,
 				variation=0.5,
 				frames_to_death=30
 			})
-			self.health=spawn_entity("health_counter",ternary(self.is_facing_left,100,10),4,{
-				commander=self
-			})
-			self.gold=spawn_entity("gold_counter",ternary(self.is_facing_left,75,11),116,{
-				commander=self
-			})
-			self.xp=spawn_entity("xp_counter",ternary(self.is_facing_left,100,36),116,{
-				commander=self
-			})
-			self.plots=spawn_entity("plots",ternary(self.is_facing_left,76,20),36,{
-				commander=self
-			})
-			self.army=spawn_entity("army",0,0,{
-				commander=self
-			})
+			local props={commander=self}
+			self.health=spawn_entity("health_counter",ternary(self.is_facing_left,100,10),4,props)
+			self.gold=spawn_entity("gold_counter",ternary(self.is_facing_left,75,11),116,props)
+			self.xp=spawn_entity("xp_counter",ternary(self.is_facing_left,101,37),116,props)
+			self.plots=spawn_entity("plots",ternary(self.is_facing_left,76,20),36,props)
+			self.army=spawn_entity("army",0,0,props)
 			local x=ternary(self.is_facing_left,92,24)
 			self.primary_menu=spawn_entity("menu",x,63,{
 				commander=self,
@@ -144,67 +82,107 @@ local entity_classes={
 					-- build
 					if index==1 then
 						self.commander.build_menu:show()
-						self:hide()
-						sfx(11)
 					-- upgrade
 					elseif index==2 then
 						local location_menu=self.commander.location_menu
 						location_menu.action="upgrade"
 						location_menu.prev_choice=item
-						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
-						self:hide()
-						sfx(11)
+						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander:center_y()-20)/75),#location_menu.menu_items))
+					-- cast spell
+					elseif index==3 then
+						self.commander.spell_menu:show()
 					end
+					return true
 				end
 			})
+			self.spell_menu=spawn_entity("menu",x,63,{
+				commander=self,
+				menu_items={},
+				on_select=function(self,item,index)
+					local commander=self.commander
+					local mana=commander.mana
+					if mana.amount>=mana.max_amount then
+						if item[2]=="fireball" then
+							spawn_entity("fireball",commander:center_x()-4,commander:center_y()-5,{
+								vx=commander.facing_dir
+							})
+							self.commander.is_frozen=false
+							mana.amount=0
+							mana.displayed_amount=0
+						elseif item[2]=="plenty" then
+							local location_menu=self.commander.location_menu
+							location_menu.action="plenty"
+							location_menu.prev_choice=item
+							location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander:center_y()-20)/75),#location_menu.menu_items))
+						elseif item[2]=="bolt" then
+							self.commander.is_frozen=false
+							local opponent=commanders[self.commander.opposing_player_num]
+							spawn_entity("bolt",ternary(opponent.is_facing_left,100,10),0)
+							sfx(27)
+							opponent.health:add(-5)
+							mana.amount=0
+							mana.displayed_amount=0
+						end
+						return true
+					end
+					sfx(12)
+				end
+			})
+			if self.class_name=="witch" then
+				self.mana=spawn_entity("mana_counter",ternary(self.is_facing_left,75,11),124,{
+					commander=self
+				})
+			end
 			self.build_menu=spawn_entity("menu",x,63,{
 				commander=self,
 				menu_items={{4,"keep","makes troops",100},{5,"farm","generates gold",100},{6,"inn","grants xp",100},{7,"archers","shoots enemies",100},{8,"church","heals wounds",100}},
 				on_select=function(self,item,index)
-					if item[4] and item[4]<=self.commander.gold.amount then
-						self:hide()
+					if item[4]<=self.commander.gold.amount then
 						local location_menu=self.commander.location_menu
 						location_menu.action="build"
 						location_menu.prev_choice=item
-						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander.y-20+self.commander.height/2)/75),#location_menu.menu_items))
-						sfx(11)
-					else
-						sfx(12)
+						location_menu:show(mid(1,flr(#location_menu.menu_items*(self.commander:center_y()-20)/75),#location_menu.menu_items))
+						return true
 					end
+					sfx(12)
 				end
 			})
 			self.location_menu=spawn_entity("location_menu",x,63,{
 				commander=self,
 				menu_items=self.plots.locations,
 				on_select=function(self,location)
+					local commander=self.commander
 					if self.action=="build" then
-						if self.commander:build(self.prev_choice[2],self.prev_choice[4],location) then
-							self:hide()
-							self.commander.is_frozen=false
-							sfx(11)
-						else
-							sfx(12)
+						if commander:build(self.prev_choice[2],self.prev_choice[4],location) then
+							commander.is_frozen=false
+							return true
 						end
-					elseif self.action=="upgrade" then
+					elseif self.action=="upgrade" or self.action=="plenty" then
 						if location.building and location.building.is_alive then
-							if location.building.upgrades<2 and self.commander:upgrade(location.building) then
-								self:hide()
-								self.commander.is_frozen=false
-								sfx(11)
-							else
-								sfx(12)
+							if self.action=="plenty" then
+								if commander.mana.amount>=commander.mana.max_amount then
+									location.building.plenty_frames=600
+									sfx(26)
+									commander.mana.amount=0
+									commander.mana.displayed_amount=0
+									commander.is_frozen=false
+									return true
+								end
+							elseif location.building.upgrades<2 and commander:upgrade(location.building) then
+								commander.is_frozen=false
+								return true
 							end
-						else
-							self:hide()
-							self.commander.is_frozen=false
-							sfx(14)
 						end
 					end
+					sfx(12)
 				end
 			})
 		end,
 		update=function(self)
 			decrement_counter_prop(self,"aftertouch_frames")
+			if self.mana and self.frames_alive%13==0 then
+				self.mana:add(self.mana_regen_rate)
+			end
 			-- activate the menu
 			if not self.is_frozen and button_presses[self.player_num][4] then
 				self.is_frozen=true
@@ -286,11 +264,21 @@ local entity_classes={
 		sprite=0,
 		on_level_up=function(self,level)
 			if level==2 then
+				add(self.primary_menu.menu_items,{3,"cast spell"})
+				add(self.spell_menu.menu_items,{9,"fireball","burns all"})
+				return {"spell: fireball","burns all"}
 			elseif level==4 then
+				add(self.spell_menu.menu_items,{10,"plenty","double effects"})
+				return {"spell: plenty","double effects"}
 			elseif level==5 then
+				self.inn_mana_generation=true
+				return {"inns: produce","mana per hit"}
 			elseif level==7 then
+				add(self.spell_menu.menu_items,{13,"bolt","damage castle"})
+				return {"spell: bolt","damage castle"}
 			elseif level==8 then
-			elseif level==9 then
+				self.mana_regen_rate=3
+				return {"triple mana","regeneration"}
 			end
 		end
 	},
@@ -301,7 +289,7 @@ local entity_classes={
 		on_level_up=function(self,level)
 			if level==2 then
 				self.move_speed=1.6
-				self.ball_speed=1.6
+				self.ball_speed=1.4
 				return {"+ball speed","+move speed"}
 			elseif level==4 then
 				self.stealing=true
@@ -310,12 +298,11 @@ local entity_classes={
 				self.aftertouch=true
 				return {"aftertouch","ball trajectory"}
 			elseif level==7 then
-				self.ball_speed=2.0
-				return {"++ball speed"}
+				self.trick_shot=true
+				return {"automatic","trick shot"}
 			elseif level==8 then
 				self.double_triggers=true
 				return {"your buildings","trigger twice"}
-			elseif level==9 then
 			end
 		end
 	},
@@ -390,7 +377,7 @@ local entity_classes={
 		end,
 		on_add=function(self,amount)
 			if amount<0 then
-				spawn_entity("spark_explosion",self.x+self.width/2,self.y+self.height/2,{
+				spawn_entity("spark_explosion",self:center_x(),self:center_y(),{
 					color=8,
 					num_sparks=-amount,
 					speed=3
@@ -400,7 +387,7 @@ local entity_classes={
 	},
 	gold_counter={
 		extends="counter",
-		amount=750,
+		amount=100,
 		max_amount=999,
 		min_tick=9,
 		max_tick=16,
@@ -408,7 +395,7 @@ local entity_classes={
 		height=5,
 		draw=function(self)
 			draw_sprite(19,18,4,5,self.x,self.y)
-			pset(self.x+20.5,self.y+2.5,5)
+			pset(self.x+21.5,self.y+2.5,5)
 			if self.displayed_amount<self.amount then
 				color(10)
 			elseif self.displayed_amount>self.amount then
@@ -427,7 +414,7 @@ local entity_classes={
 		max_tick=2,
 		width=16,
 		height=7,
-		level=7,
+		level=1,
 		draw=function(self)
 			draw_sprite(24,27,11,3,self.x,self.y+1)
 			print(self.level,self.x+13.5,self.y+0.5,7)
@@ -437,15 +424,15 @@ local entity_classes={
 			end
 		end,
 		on_add=function(self,amount)
-			if self.level>=9 then
+			if self.level>=8 then
 				self.amount=0
 				self.displayed_amount=0
 			elseif self.amount>=self.max_amount then
 				self.amount=0
 				self.displayed_amount=0
-				self.max_amount+=10
+				self.max_amount+=12
 				self.level+=1
-				spawn_entity("spark_explosion",self.x+self.width/2,self.y+self.height/2,{
+				spawn_entity("spark_explosion",self:center_x(),self:center_y(),{
 					color=14,
 					num_sparks=10,
 					speed=3
@@ -464,6 +451,22 @@ local entity_classes={
 				})
 			end
 		end
+	},
+	mana_counter={
+		amount=0,
+		max_amount=42,
+		extends="counter",
+		min_tick=5,
+		max_tick=5,
+		width=42,
+		height=3,
+		level=1,
+		draw=function(self)
+			rectfill(self.x+0.5,self.y+0.5,self.x+self.width-0.5,self.y+self.height-0.5,1)
+			if self.displayed_amount>0 then
+				rectfill(self.x+0.5,self.y+0.5,self.x-0.5+self.displayed_amount,self.y+self.height-0.5,ternary(self.displayed_amount>=42 and self.frames_alive%30<15,7,12))
+			end
+		end,
 	},
 	level_up_effect={
 		width=63,
@@ -505,6 +508,9 @@ local entity_classes={
 			elseif self.type=="gold" then
 				draw_sprite(19,18,4,5,self.x-2*#text-2,self.y-5)
 				color(10)
+			elseif self.type=="mana" then
+				draw_sprite(91,25,4,5,self.x-2*#text-2,self.y-5)
+				color(12)
 			end
 			print(text,self.x-2*#text+4.5+dx,self.y-4.5)
 		end
@@ -587,13 +593,14 @@ local entity_classes={
 		spawn_troop=function(self,building)
 			add(self.troops,{
 				x=building.x+3+self.commander.facing_dir*(rnd(5)),
-				y=building.y+building.height/2+rnd_int(-4,3),
+				y=building:center_y()+rnd_int(-4,3),
 				battle_line=building.battle_line,
 				hits=0
 			})
 		end,
 		destroy_troop=function(self,troop)
 			del(self.troops,troop)
+			sfx(24)
 			spawn_entity("spark_explosion",troop.x,troop.y,{
 				color=self.commander.colors[2],
 				min_angle=45,
@@ -626,8 +633,10 @@ local entity_classes={
 				end
 				if button_presses[player_num][4] then
 					button_presses[player_num][4]=false
-					self:on_select(self.menu_items[self.highlighted_index],self.highlighted_index)
-					-- sfx(11)
+					if self:on_select(self.menu_items[self.highlighted_index],self.highlighted_index) then
+						self:hide()
+						sfx(11)
+					end
 				end
 				if button_presses[player_num][5] then
 					self:hide()
@@ -693,11 +702,13 @@ local entity_classes={
 				self:render_pointer(loc.x,loc.y,4)
 				if self.action=="build" then
 					self:render_text(prev_choice[2],prev_choice[3],prev_choice[4])
-				elseif self.action=="upgrade" then
+				elseif self.action=="upgrade" or self.action=="plenty" then
 					local location=self.menu_items[self.highlighted_index]
 					local building=location.building
 					if building and building.is_alive then
-						if building.upgrades==0 and commander.xp.level<3 then
+						if self.action=="plenty" then
+							self:render_text("double effect")
+						elseif building.upgrades==0 and commander.xp.level<3 then
 							self:render_text("requires lvl 3")
 						elseif building.upgrades==1 and commander.xp.level<6 then
 							self:render_text("requires lvl 6")
@@ -727,9 +738,13 @@ local entity_classes={
 			if self.vx==0 and self.vy==0 and button_presses[1][0] and self.frames_alive>10 then
 				sfx(3)
 				local launch_to_player_1=(self.frames_alive%40<20)
-				self.vx=ternary(launch_to_player_1,-0.67,0.67)
+				self.vx=ternary(launch_to_player_1,-0.65,0.65)
 			end
+			local prev_x=self.x
 			self:apply_velocity(self.ball_speed)
+			if self.commander and self.commander.trick_shot and (prev_x<63)!=(self.x<63) then
+				self.vy*=-1
+			end
 			-- if ball.vx!=0 and ball.vy==0 then
 			-- 	ball.vy=0.002
 			-- end
@@ -773,23 +788,23 @@ local entity_classes={
 					sfx(6)
 				-- commander can bounce the ball in interesting ways
 				elseif other.is_commander then
-					local offset_y=self.y+self.height/2-other.y-other.height/2+other.vy/2
+					local offset_y=self:center_y()-other:center_y()+other.vy/2
 					local max_offset=other.height/2
 					local percent_offset=mid(-1,offset_y/max_offset,1)
 					percent_offset*=abs(percent_offset)
 					self.vy=1.2*percent_offset+0.4*other.vy
-					other.gold:add(40)
-					spawn_entity("pop_text",self.x+self.width/2,other.y-5,{
-						amount=40,
+					other.gold:add(55)
+					spawn_entity("pop_text",self:center_x(),other.y-5,{
+						amount=55,
 						type="gold"
 					})
 					other.xp:add(15)
-					spawn_entity("pop_text",self.x+self.width/2,other.y+1,{
+					spawn_entity("pop_text",self:center_x(),other.y+1,{
 						amount=15,
 						type="xp"
 					})
 					self.commander=other
-					self.vx+=ternary(self.vx<0,-1,1)*0.01
+					self.vx+=ternary(self.vx<0,-1,1)*0.02
 					self.ball_speed=other.ball_speed
 					other.aftertouch_frames=50
 					sfx(4)
@@ -814,14 +829,19 @@ local entity_classes={
 		show_health_bar_frames=0,
 		hurt_channel=1, -- buildings
 		effect_offset=0,
+		plenty_frames=0,
 		update=function(self)
 			decrement_counter_prop(self,"show_health_bar_frames")
+			decrement_counter_prop(self,"plenty_frames")
 		end,
 		draw=function(self)
 			pal(3,self.commander.colors[1])
 			pal(11,self.commander.colors[2])
 			pal(14,self.commander.colors[3])
 			draw_sprite(0+8*self.upgrades,8+15*self.sprite,8,15,self.x,self.y-9+self.offset_y)
+			if self.plenty_frames>0 then
+				draw_sprite(42,33,8,5,self.x-1,self.y-5-self.health_bar_height[self.upgrades+1])
+			end
 			if self.show_health_bar_frames>0 then
 				local height=self.health_bar_height[self.upgrades+1]
 				rectfill(self.x+0.5,self.y-1.5-height,self.x+6.5,self.y-0.5-height,2)
@@ -833,33 +853,38 @@ local entity_classes={
 		end,
 		on_hurt=function(self,other)
 			self.invincibility_frames=15
-			if other.commander==self.commander then
-				self:on_trigger(other)
-				if self.commander.double_triggers then
-					self.effect_offset=7
+			if other.class_name=="ball" then
+				if other.commander==self.commander then
 					self:on_trigger(other)
-					self.effect_offset=0
-				end
-				spawn_entity("trigger_effect",self.x,self.y,{
-					color=self.commander.colors[2]
-				})
-			elseif other.commander then
-				self:damage(other.commander.ball_damage_mult*20)
-				if other.commander.stealing then
-					self.commander.gold:add(-5)
-					other.commander.gold:add(5)
-					spawn_entity("pop_text",other.commander.x+other.commander.width/2,other.commander.y,{
-						amount=5,
-						type="gold"
+					if self.commander.double_triggers or self.plenty_frames>0 then
+						self.effect_offset=7
+						self:on_trigger(other)
+						self.effect_offset=0
+					end
+					spawn_entity("trigger_effect",self.x,self.y,{
+						color=self.commander.colors[2]
 					})
+				elseif other.commander then
+					self:damage(other.commander.ball_damage_mult*20)
+					if other.commander.stealing then
+						self.commander.gold:add(-5)
+						other.commander.gold:add(5)
+						spawn_entity("pop_text",other.commander:center_x(),other.commander.y,{
+							amount=5,
+							type="gold"
+						})
+					end
+					sfx(17)
 				end
+			else
+				self:damage(other.damage)
 				sfx(17)
 			end
 		end,
 		damage=function(self,amount)
 			self.hit_points-=amount
 			self.show_health_bar_frames=60
-			spawn_entity("spark_explosion",self.x+self.width/2,self.y+self.height,{
+			spawn_entity("spark_explosion",self:center_x(),self.y+self.height,{
 				color=6,
 				min_angle=70,
 				max_angle=110,
@@ -876,13 +901,16 @@ local entity_classes={
 				self:die()
 			end
 		end,
+		on_death=function(self)
+			sfx(28)
+		end,
 		on_trigger=noop
 	},
 	keep={
 		extends="building",
 		sprite=1,
 		health_bar_height={4,6,7},
-		upgrade_options={{"keep v2","+3 troop",200},{"keep v3","+7 troop",300},{"max upgrade"}},
+		upgrade_options={{"keep v2","+3 troop",150},{"keep v3","+7 troop",200},{"max upgrade"}},
 		on_trigger=function(self)
 			local num_troops=({1,3,7})[self.upgrades+1]+self.commander.bonus_troops_per_keep
 			local i
@@ -897,11 +925,11 @@ local entity_classes={
 		sprite=2,
 		health_bar_height={2,2,2},
 		offset_y=4,
-		upgrade_options={{"farm v2","+75 gold",200},{"farm v3","+200 gold",300},{"max upgrade"}},
+		upgrade_options={{"farm v2","+50 gold",150},{"farm v3","+75 gold",200},{"max upgrade"}},
 		on_trigger=function(self,other)
-			local gold=({25,75,200})[self.upgrades+1]
+			local gold=({25,50,75})[self.upgrades+1]
 			self.commander.gold:add(gold)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
+			spawn_entity("pop_text",self:center_x(),other.y-5-self.effect_offset,{
 				amount=gold,
 				type="gold"
 			})
@@ -912,30 +940,38 @@ local entity_classes={
 		extends="building",
 		sprite=3,
 		health_bar_height={3,4,5},
-		upgrade_options={{"inn v2","+30 xp",200},{"inn v3","+50 xp",300},{"max upgrade"}},
+		upgrade_options={{"inn v2","+30 xp",150},{"inn v3","+50 xp",200},{"max upgrade"}},
 		on_trigger=function(self,other)
-			local xp=({10,30,50})[self.upgrades+1]
+			local xp=({10,20,35})[self.upgrades+1]
 			self.commander.xp:add(xp)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
+			spawn_entity("pop_text",self:center_x()-ternary(self.commander.inn_mana_generation,7,0),other.y-5-self.effect_offset,{
 				amount=xp,
 				type="xp"
 			})
 			sfx(20)
+			if self.commander.inn_mana_generation then
+				local mana=self.commander.mana_regen_rate*({5,8,12})[self.upgrades+1]
+				self.commander.mana:add(mana)
+				spawn_entity("pop_text",self:center_x()+7,other.y-5-self.effect_offset,{
+					amount=mana,
+					type="mana"
+				})
+			end
 		end
 	},
 	archers={
 		extends="building",
 		sprite=4,
 		health_bar_height={4,6,8},
-		upgrade_options={{"archers v2","wide range",200},{"archers v3","max range",300},{"max upgrade"}},
+		upgrade_options={{"archers v2","wide range",150},{"archers v3","max range",200},{"max upgrade"}},
 		on_trigger=function(self,other)
 			local army=commanders[self.commander.opposing_player_num].army
 			local troop
 			local range=({13,21,27})[self.upgrades+1]
 			local arrows=({3,6,9})[self.upgrades+1]
 			for troop in all(army.troops) do
-				local dx=mid(-100,self.x+self.width/2-troop.x,100)
-				local dy=mid(-100,self.y+self.height/2-troop.y,100)
+				local dx=mid(-100,self:center_x()-troop.x,100)
+				local dy=mid(-100,self:center_y()-troop.y,100)
 				if dx*dx+dy*dy<range*range and arrows>0 then
 					army:destroy_troop(troop)
 					arrows-=1
@@ -945,7 +981,7 @@ local entity_classes={
 			for i=1,(5+2*self.upgrades) do
 				local dist=(0.6+rnd(0.3))*range
 				local angle=(i-rnd())/5
-				spawn_entity("spark_explosion",self.x+self.width/2+dist*cos(angle),self.y+self.height/2+dist*sin(angle),{
+				spawn_entity("spark_explosion",self:center_x()+dist*cos(angle),self:center_y()+dist*sin(angle),{
 					color=4,
 					min_angle=60,
 					max_angle=120,
@@ -956,7 +992,7 @@ local entity_classes={
 					delay=i
 				})
 			end
-			spawn_entity("range_indicator",self.x+self.width/2,self.y+self.height/2,{
+			spawn_entity("range_indicator",self:center_x(),self:center_y(),{
 				range=range,
 				frames_to_death=30,
 				color=8
@@ -974,11 +1010,11 @@ local entity_classes={
 		extends="building",
 		sprite=5,
 		health_bar_height={4,4,6},
-		upgrade_options={{"church v2","+2 health",200},{"church v3","+4 health",300},{"max upgrade"}},
+		upgrade_options={{"church v2","+2 health",150},{"church v3","+4 health",200},{"max upgrade"}},
 		on_trigger=function(self,other)
 			local health=({1,2,4})[self.upgrades+1]
 			self.commander.health:add(health)
-			spawn_entity("pop_text",self.x+self.width/2,other.y-5-self.effect_offset,{
+			spawn_entity("pop_text",self:center_x(),other.y-5-self.effect_offset,{
 				amount=health,
 				type="health"
 			})
@@ -1037,15 +1073,15 @@ local entity_classes={
 		width=40,
 		height=36,
 		render_layer=9,
-		choice=1,
+		choice=0,
 		update=function(self)
 			if button_presses[self.player_num][2] then
-				-- self.choice=ternary(self.choice==0,2,self.choice-1)
-				self.choice=ternary(self.choice==1,2,1)
+				self.choice=ternary(self.choice==0,2,self.choice-1)
+				-- self.choice=ternary(self.choice==1,2,1)
 				sfx(0)
 			elseif button_presses[self.player_num][3] then
-				-- self.choice=(self.choice+1)%3
-				self.choice=ternary(self.choice==1,2,1)
+				self.choice=(self.choice+1)%3
+				-- self.choice=ternary(self.choice==1,2,1)
 				sfx(0)
 			end
 		end,
@@ -1093,6 +1129,7 @@ local entity_classes={
 			end
 		end,
 		draw=function(self)
+			draw_sprite(24,120,58,8,34,20)
 			rectfill(0,self.y-10.5,127,self.y+self.height+10.5,0)
 			print("press",self.x+6.5,self.y+0.5,7)
 			print("to start",self.x+0.5,self.y+17.5,7)
@@ -1156,6 +1193,58 @@ local entity_classes={
 		end,
 		draw=function(self)
 			rectfill(self.x+0.5,self.y+0.5,self.x+6.5,self.y+6.5-self.frames_alive,self.color)
+		end
+	},
+	fireball={
+		width=8,
+		height=8,
+		hit_channel=1, -- buildings
+		damage=10,
+		frames_to_death=97,
+		update=function(self)
+			if self.frames_alive%5==0 then
+				sfx(25)
+			end
+			self:apply_velocity()
+			spawn_entity("spark_explosion",self.x+rnd_int(2,6),self.y+rnd_int(2,6),{
+				color=rnd_int(8,10),
+				-- min_angle=300,
+				-- max_angle=420,
+				variation=0.9,
+				frames_to_death=10,
+				speed=2,
+				friction=0.3
+			})
+			if commanders then
+				local commander
+				for commander in all(commanders) do
+					local troop
+					for troop in all(commander.army.troops) do
+						local dx=mid(-100,self:center_x()-troop.x,100)
+						local dy=mid(-100,self:center_y()-troop.y,100)
+						if dx*dx+dy*dy<4*4 then
+							commander.army:destroy_troop(troop)
+						end
+					end
+				end
+			end
+		end,
+		draw=noop
+	},
+	bolt={
+		width=17,
+		height=22,
+		frames_to_death=8,
+		init=function(self)
+			spawn_entity("spark_explosion",self:center_x(),self:center_y(),{
+				color=10,
+				num_sparks=30,
+				variation=0.6,
+				speed=3	
+			})
+		end,
+		draw=function(self)
+			draw_sprite(35,40,17,22,self.x,self.y)
 		end
 	}
 }
@@ -1491,7 +1580,13 @@ function spawn_entity(class_name,x,y,args,skip_init)
 			despawn=function(self)
 				self.is_alive=false
 			end,
-			on_death=noop
+			on_death=noop,
+			center_x=function(self)
+				return self.x+self.width/2
+			end,
+			center_y=function(self)
+				return self.y+self.height/2
+			end
 		}
 	end
 	-- add class-specific properties
@@ -1515,7 +1610,7 @@ function spawn_entity(class_name,x,y,args,skip_init)
 end
 
 function is_rendered_on_top_of(a,b)
-	return ternary(a.render_layer==b.render_layer,a.y+a.height/2>b.y+b.height/2,a.render_layer>b.render_layer)
+	return ternary(a.render_layer==b.render_layer,a:center_y()>b:center_y(),a.render_layer>b.render_layer)
 end
 
 function freeze_and_shake_screen(f,s)
@@ -1592,13 +1687,13 @@ function draw_sprite(sx,sy,sw,sh,x,y,flip_h,flip_y,sw2,sh2)
 end
 
 __gfx__
-00b0b000000000000000001000111011101010100000000000100001111100011100110001111000111100011110001111000115555555555555577777777777
-0bbb0bbb0bbb0011110001b1001bb1bb1011b1100111110001b11001bbb10001b1001b101b11b101b11b101b11b101b11b101b15555555555555507777777770
-044404440fbf001bb1001bbb101bb1bb101bbb1001bbb1001bbb1001bbb10111b11101b1b1001b1b1001b1b1001b1b1001b1b105555555555555500777777700
-044404440fff1111111111b1111bb1bb101bbb1001bbb101bbbbb101111101bbbbb1001b100001b100001b100001b100001b1005555555555555500077777000
-0bbb0bbb0bbb1bb1bb1001b100111b11101bbb1001bbb1011bbb110100010111b11101b1b1001b1b1001b1b1001b1b1001b1b105555555555555500007770000
-080c080c080c1111111001b100111111101bbb10011111001bbb100111110001b1001b101b11b101b11b101b11b101b11b101b15555555555555500000700000
-01111111110200000000011100001110001111100000000011111001000100011100110001111000111100011110001111000115555555555555555555555555
+00b0b000000000000000001000111011101010100000000000100001111100011100000100001101100111110001110000011005555555555555577777777777
+0bbb0bbb0bbb0011110001b1001bb1bb1011b1100111110001b11001bbb10001b100001b10001b1b101bbbbb1001b100001b1005555555555555507777777770
+044404440fbf001bb1001bbb101bb1bb101bbb1001bbb1001bbb1001bbb10111b11101bbb1001b1b101b1b1b1001b10001b11105555555555555500777777700
+044404440fff1111111111b1111bb1bb101bbb1001bbb101bbbbb101111101bbbbb101bbb1001bbb101bbbbb101bbb101bbbbb15555555555555500077777000
+0bbb0bbb0bbb1bb1bb1001b100111b11101bbb1001bbb1011bbb110100010111b11101b1b10001b10001bbb101bbbbb10111b105555555555555500007770000
+080c080c080c1111111001b100111111101bbb10011111001bbb100111110001b1000011100001b10001b1b1011bbb11001b1005555555555555500000700000
+01111111110200000000011100001110001111100000000011111001000100011100000000000111000010100011111000110005555555555555555555555555
 1677777776101110000111111111000000100000000000000000000000000000000000000000000000000000003bb003bb3bbbb3bbbbbb3bbbb03bb03bb00005
 1777777777116761111777777777100000100000000000000000100000000000000000000000000000000000003bb003bb03bb0003bb03bb03bb3bb03bb00005
 17777777771177711d6777767776100001110000000000000000100000000000000000000000000000000000003bb003bb03bb0003bb03bb00003bb03bb00005
@@ -1617,43 +1712,43 @@ bb333114222400888009aaa544444000111110011111111111111110000001111100111111111111
 b3333312444200080000aa052444400011111111111111111111111000000111111111111111111111110003bbbbb3bb3b3bb03bb03bb3bbb3bbbbbb003bb005
 00000000000000000003b0002222200011111111111111111111111000000111111111111111111111110003bb3bb3bb03bbb03bb03bbb3bb3bb03bb003bb005
 00000000000000000003bb001222200011111111111111111111111000000111111111111111111111110003bb3bb3bb003bb3bbbb03bbbb03bb03bb003bb005
-0000000000000000000100bb111110001111111112111211111111100000011111111121112111111111000555555555550003bb003bb3bbbb3bb003bb03bb00
-000000000000000000010000011110001111111112222211111111100000011111111122222111111111000555555555550003bb003bb03bb03bbb03bb03bb00
-00000000000600000061600070070707000e0e0ee0b003bb0003bbbbb3bb03bb3bbbbb3bb000003bb03bb3bbbbb55555550003bb003bb03bb03bb3b3bb03bb00
-0000000006ddd6006dd1dd60700757070000e00e0ebb03bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb55555550003bb3b3bb03bb03bb3b3bb03bb00
-000600006ddddd606ddddd6077007007705e0e0ee0bbb3bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb55555550003bbbbbbb03bb03bb03bbb000000
+0000000000000000000100bb1111100011111111121112111111111000000111111111211121111111110005555c00c5550003bb003bb3bbbb3bb003bb03bb00
+00000000000000000001000001111000111111111222221111111110000001111111112222211111111100055551cc15550003bb003bb03bb03bbb03bb03bb00
+00000000000600000061600070070707000e0e0ee0b003bb0003bbbbb3bb03bb3bbbbb3bb000003bb03bb3bbbbb0cc05550003bb003bb03bb03bb3b3bb03bb00
+0000000006ddd6006dd1dd60700757070000e00e0ebb03bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bbc11c5550003bb3b3bb03bb03bb3b3bb03bb00
+000600006ddddd606ddddd6077007007705e0e0ee0bbb3bb0003bb0003bb03bb3bb0003bb000003bb03bb3bb3bb10015550003bbbbbbb03bb03bb03bbb000000
 06ddd60066d6d66066d6d66000000000000e0e0e00bb03bb0003bbb003bbbbbb3bbb003bb000003bb03bb3bbbbb555555500003bb3bb03bbbb3bb003bb03bb00
 06d6d6000666660066666660000000111110003000b003bb0003bb00003bbbb03bb0003bb000003bbb3bb3bb00055555553bb00003bbbb003bbbb03bbbbb03bb
 0666660003bbbe0003bbbe000000011111100111005553bbbbb3bbbbb003bb003bbbbb3bbbbb0003bbbb03bb00055555553bb0003bb03bb3bb03bb3bb00003bb
-03bbbe000dd666000dd66600000000111110177710555555555555555555555555555555555555555555555555555555553bb0003bb03bb3bbbb003bb00003bb
-0666660003bbbe0003bbbe00000000000001777771555555555555555555555555555555555555555555555555555555553bb0003bb03bb003bbbb3bbb0003bb
-06dd66000666660006666600000111111111777771555555555555555555555555555555555555555555555555555555553bb0003bbb3bb3bb03bb3bb0000000
-066666000661660006616600001111111111777771555555555555555555555555555555555555555555555555555555553bbbbb03bbbb003bbbb03bbbbb03bb
-0d616d000d616d000d616d0000011111111117771155555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+03bbbe000dd666000dd66600000000111110177710000001105555555555555555555555555555555555555555555555553bb0003bb03bb3bbbb003bb00003bb
+0666660003bbbe0003bbbe00000000000001777771000010015555555555555555555555555555555555555555555555553bb0003bb03bb003bbbb3bbb0003bb
+06dd66000666660006666600000111111111777771101000105555555555555555555555555555555555555555555555553bb0003bbb3bb3bb03bb3bb0000000
+066666000661660006616600001111111111777771010001005555555555555555555555555555555555555555555555553bbbbb03bbbb003bbbb03bbbbb03bb
+0d616d000d616d000d616d0000011111111117771110101111555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000000111111111111111155555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 00000000000000000000000001111111111011111055555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000001111111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000111111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00400000004000000040000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-64440000644400006444000000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-d4240000d4240000d424000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-426419a9426419a9426419a900000000111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-2bbb1a9a2bbb1a9a2bbb1a9a00000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-666619a9666619a9666619a900000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000009a909a909a900000000111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-0000000000001a9a1a9a1a9a00000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000019a919a919a900000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000014441444144400000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000000000111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000000000000000000111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000000000004000000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00000000000400000024444000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00040000002444400242422000000011111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-00244000024242202227242000000001111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
+000000000000000000000000011111111110000000aa000000005555555555555555555555555555555555555555555555555555555555555555555555555555
+000000000000000000000000001111111110000000aa000000005555555555555555555555555555555555555555555555555555555555555555555555555555
+004000000040000000400000000000011110000000aa000000005555555555555555555555555555555555555555555555555555555555555555555555555555
+644400006444000064440000000000111110000000aaa00000005555555555555555555555555555555555555555555555555555555555555555555555555555
+d4240000d4240000d42400000000000111100000000aa00000005555555555555555555555555555555555555555555555555555555555555555555555555555
+426419a9426419a9426419a900000000111000000000aa0000005555555555555555555555555555555555555555555555555555555555555555555555555555
+2bbb1a9a2bbb1a9a2bbb1a9a0000000111100000000aaa0000005555555555555555555555555555555555555555555555555555555555555555555555555555
+666619a9666619a9666619a90000001111100000000a0aa000005555555555555555555555555555555555555555555555555555555555555555555555555555
+d6161444d6161444d6161444000000011110000000aa00a000005555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000009a909a909a9000000001110000000a000aa00005555555555555555555555555555555555555555555555555555555555555555555555555555
+0000000000001a9a1a9a1a9a00000001111000000aa000a0aaa05555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000019a919a919a90000001111100000a0000a00000a5555555555555555555555555555555555555555555555555555555555555555555555555555
+0000000000001444144414440000000111100000a0000a0000005555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000000000000000000000000111000aa0a000aa000005555555555555555555555555555555555555555555555555555555555555555555555555555
+0000000000000000000000000000000111100aa0000000a000005555555555555555555555555555555555555555555555555555555555555555555555555555
+000000000000000000000000000000011110aa0a0000000a00005555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000000000000000000000001111a00000000000aa0005555555555555555555555555555555555555555555555555555555555555555555555555555
+000000000000000000000000000000001110000000000000aa005555555555555555555555555555555555555555555555555555555555555555555555555555
+000000000000000000040000000000111110000000000000a0a05555555555555555555555555555555555555555555555555555555555555555555555555555
+00000000000400000024444000000011111000000000000a000a5555555555555555555555555555555555555555555555555555555555555555555555555555
+0004000000244440024242200000001111100000000000a000005555555555555555555555555555555555555555555555555555555555555555555555555555
+002440000242422022272420000000011110000000000a0a00005555555555555555555555555555555555555555555555555555555555555555555555555555
 02424200222724202277724000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 22272420227772402717172000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 22777240277717202777772000000111111555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
@@ -1712,16 +1807,16 @@ d6161444d6161444d616144400000001111555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555550153
-80000008800000088000000855555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555554567
-800000088000000880000008555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555589ab
-8888888888888888888888885555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555cdef
+80000008800000088000000805777777057777777057777777005777777057777777005777777057775555555555555555555555555555555555555555555555
+80000008800000088000000857770577757770577757770577757770577757770577757770577757775555555555555555555555555555555555555555555555
+80000008800000088000000857770577757770577757770577757770577757770577757770577700005555555555555555555555555555555555555555555555
+80000008800000088000000857770577757770000057770577757770577757770577757770577757775555555555555555555555555555555555555555555555
+80000008800000088000000857770577757770000057770577757770577757770577757770577757775555555555555555555555555555555555555555550153
+80000008800000088000000857770577757770000057777777057770577757770577705777777757775555555555555555555555555555555555555555554567
+800000088000000880000008566656666566600000566600000566605666566605666000005666566655555555555555555555555555555555555555555589ab
+8888888888888888888888880566665665666000005666000000566666605666056660566666605666555555555555555555555555555555555555555555cdef
 __sfx__
-010b00000053500500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
+010b00000057500500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
 0108000024155281452b135281352b155301603015130111001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100
 01060000246202462123621226111f6111b61116611116110c6110661502615016150060000600006000060000600006000060000600006000060000600006000060000600006000060000600006000060000600
 010a00002456024531245212451124511005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
@@ -1745,3 +1840,8 @@ __sfx__
 010800002443518415244351841524435244212441124411084000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400004000040000400
 010b00001852218532185421854218532185221851200500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500
 01080000183551c3551f3551c3551f355213552435526355283553035030331303110030000300003000030000300003000030000300003000030000300003000030000300003000030000300003000030000300
+010200003222032221312212d21127211002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200002000020000200
+01020000066100d6211463115631146310f6210562102611016000160000600006000060000600006000060000600006000060001600016000060000600006000060000600006000060000600006000060000600
+010500000000012310163111a321203312435024321243110c3000030000300003000030000300003000030000300003000030000300003000030000300003000030000300003000030000300003000030000300
+00050000276301f6411b651326602766114651386602d6610a6510365104651056410b6410c64109631076310162101621066210b6110a6110761104611026110161101611006000060000600006000060000600
+010600002b650216511565113651126410f6310c6310a631066210462103621036210261102611026110261101611016110161101611016110000000000000000000000000000000000000000000000000000000
