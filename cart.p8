@@ -3,6 +3,13 @@ version 16
 __lua__
 
 --[[
+next steps:
+	ball hitting / trigger buildings
+	building health
+
+reminders:
+	repairing
+
 render layers:
 	1:	far background
 	2:	background ui elements
@@ -13,6 +20,10 @@ render layers:
 	7:	menus
 	9:	in-game ui
 	10:	ui
+
+hurt channels:
+	1:	building
+	2:	troops
 ]]
 
 -- useful no-op function
@@ -33,6 +44,7 @@ local button_presses
 
 -- entity vars
 local entities
+local balls
 local leaders
 local entity_classes={
 	-- leaders
@@ -43,12 +55,14 @@ local entity_classes={
 		init=function(self)
 			local left=self.is_on_left_side
 			local props={leader=self}
+			-- create sub-entities
+			self.army=spawn_entity("army",0,0,props)
+			self.real_estate=spawn_entity("real_estate",ternary(left,36,90),39,props)
 			-- create ui elements
 			self.text_box=spawn_entity("text_box",ternary(left,0,64),104,props)
 			self.health=spawn_entity("health_counter",ternary(left,1,74),2,props)
 			self.gold=spawn_entity("gold_counter",ternary(left,41,81),10,props)
-			self.xp=spawn_entity("xp_counter",ternary(left,35,75),18,props)			
-			self.real_estate=spawn_entity("real_estate",ternary(left,36,90),39,props)
+			self.xp=spawn_entity("xp_counter",ternary(left,35,75),18,props)
 			-- create menus
 			local menu_x=ternary(left,28,98)
 			self.main_menu=spawn_entity("menu",menu_x,66,{
@@ -116,7 +130,7 @@ local entity_classes={
 								building:die()
 							end
 							-- create the new building
-							plot.building=spawn_entity(self.prev_item.title,plot.x-3,plot.y-5,{
+							plot.building=spawn_entity(self.prev_item.title,plot.x-3,plot.y-6,{
 								leader=leader,
 								plot=plot
 							})
@@ -192,6 +206,7 @@ local entity_classes={
 			local x,y=self.x+ternary(self.is_facing_left,5,-3),self:center_y()
 			local dx,dy=mid(-100,ball:center_x()-x,100),mid(-100,ball:center_y()-y,100)
 			local dist=sqrt(dx*dx+dy*dy)
+			ball.leader=self
 			-- adjust ball velocity based on line from center of leader to center of ball
 			ball.vx=dx/dist
 			ball.vy=dy/dist
@@ -215,48 +230,113 @@ local entity_classes={
 	-- buildings
 	building={
 		width=7,
-		height=7,
+		height=8,
+		hurt_channel=1, -- buildings
 		upgrades=0,
 		shadow_y_offset=3,
+		health=100,
+		max_health=100,
+		show_health_bar_frames=0,
+		update=function(self)
+			decrement_counter_prop(self,"show_health_bar_frames")
+		end,
 		draw=function(self,x,y)
+			-- apply the leader's colors
 			local colors=self.leader.colors
 			pal(3,colors[2])
 			pal(11,colors[4])
 			pal(14,colors[5])
+			-- draw the building
 			sspr2(95+8*self.upgrades,16*self.sprite-16,8,16,x,y-7)
+			-- draw the building's health bar
+			if self.show_health_bar_frames>0 then
+				local health_bar_y=y+4-self.visible_height[self.upgrades+1]
+				rectfill2(x,health_bar_y,7,2,2)
+				rectfill2(x,health_bar_y,mid(1,flr(1+6*self.health/self.max_health),7),2,8)
+			end
 		end,
 		draw_shadow=function(self,x,y)
 			sspr2(84,12*self.sprite+4*self.upgrades-12,11,4,x-9,y+self.shadow_y_offset)
 		end,
+		on_hurt=function(self,other)
+			if other.last_hit_building!=self then
+				other.last_hit_building=self
+				-- trigger from a ball with the same leader
+				if self.leader==other.leader then
+					self:trigger(other)
+				-- take damage from a ball from another leader
+				elseif other.leader then
+					self:damage(other.damage)
+				end
+			end
+		end,
+		damage=function(self,amount)
+			self.health-=amount
+			self.show_health_bar_frames=60
+			if self.health<0 then
+				self:die()
+			end
+		end,
+		trigger=noop,
 		on_death=function(self)
 			self.plot.building=nil
+		end,
+		pop_text=function(self,amount,sprite,color,right_side_icon)
+			spawn_entity("pop_text",self:center_x(),self.y+6-self.visible_height[self.upgrades+1],{
+				text=""..amount,
+				sprite=sprite,
+				color=color,
+				right_side_icon=right_side_icon
+			})
 		end
 	},
 	keep={
 		extends="building",
 		sprite=1,
-		upgrade_descriptions={{"spawns 3","troops"},{"spawns 7","troops"}}
+		visible_height={9,11,14},
+		upgrade_descriptions={{"spawns 3","troops"},{"spawns 7","troops"}},
+		trigger=function(self)
+			local num_troops=({1,3,7})[self.upgrades+1]
+			-- spawn troops
+			local i
+			for i=1,num_troops do
+				self.leader.army:spawn_troop(self,2*i-2)
+			end
+		end
 	},
 	farm={
 		extends="building",
 		shadow_y_offset=1,
 		sprite=2,
-		upgrade_descriptions={{"generates","50 gold"},{"generates","75 gold"}}
+		visible_height={9,9,9},
+		upgrade_descriptions={{"generates","50 gold"},{"generates","75 gold"}},
+		trigger=function(self)
+			self:pop_text(25,1,10)
+		end
 	},
 	inn={
 		extends="building",
 		sprite=3,
-		upgrade_descriptions={{"grants 30","experience"},{"grants 50","experience"}}
+		visible_height={8,9,10},
+		upgrade_descriptions={{"grants 30","experience"},{"grants 50","experience"}},
+		trigger=function(self)
+			self:pop_text(12,3,14,true)
+		end
 	},
 	archer={
 		extends="building",
 		sprite=4,
+		visible_height={9,11,13},
 		upgrade_descriptions={{"wider range"},{"max range"}}
 	},
 	church={
 		extends="building",
 		sprite=5,
-		upgrade_descriptions={{"heals 3","hit points"},{"heals 5","hit points"}}
+		visible_height={9,9,12},
+		upgrade_descriptions={{"heals 3","hit points"},{"heals 5","hit points"}},
+		trigger=function(self)
+			self:pop_text(5,0,8)
+		end
 	},
 	-- game entities
 	ball={
@@ -264,6 +344,9 @@ local entity_classes={
 		height=3,
 		vx=1,
 		vy=0,
+		hit_channel=1+2, -- buildings, troops
+		damage=20,
+		-- last_hit_building=nil,
 		update=function(self)
 			local prev_x,prev_y=self.x,self.y
 			self:apply_velocity()
@@ -276,6 +359,7 @@ local entity_classes={
 				if collide_y==mid(leader.y-self.height,collide_y,leader.y+leader.height) then
 					-- there was a paddle hit!
 					self.x,self.y=paddle_x,collide_y
+					self.last_hit_building=nil
 					leader:hit_ball(self)
 				end
 			end
@@ -295,19 +379,117 @@ local entity_classes={
 				self.x=level_left
 				if self.vx<0 then
 					self.vx*=-1
+					self.last_hit_building=nil
 				end
 			elseif self.x>level_right-self.width then
 				self.x=level_right-self.width
 				if self.vx>0 then
 					self.vx*=-1
+					self.last_hit_building=nil
 				end
 			end
 		end,
 		draw=function(self,x,y)
+			if self.leader then
+				pal(7,self.leader.colors[5])
+			end
 			rectfill2(x,y,self.width,self.height,7)
 		end,
 		draw_shadow=function(self,x,y)
 			rectfill2(x-1,y+1,self.width,self.height,1)
+		end
+	},
+	army={
+		width=0,
+		height=0,
+		render_layer=4,
+		init=function(self)
+			self.troops={}
+		end,
+		update=function(self)
+			local leader=self.leader
+			local is_facing_left=leader.is_facing_left
+			-- update all troops
+			local troop
+			for troop in all(self.troops) do
+				decrement_counter_prop(troop,"delay")
+				if troop.delay<=0 then
+					local speed=troop.speed_mult*0.3
+					-- jump
+					troop.vz-=0.2
+					troop.z+=troop.vz
+					if troop.z<=0 then
+						troop.z,troop.vz,speed=0,0,troop.speed_mult*0.1
+					end
+					-- move upwards
+					if (is_facing_left and troop.x<=17) or (not is_facing_left and troop.x>=109) then
+						troop.y-=speed
+						-- destroy the enemy castle
+						if troop.y<27 then
+							troop:die()
+							self.leader.opposing_leader.health:decrease(1)
+						end
+					-- move sideways
+					else
+						troop.x+=speed*leader.facing_dir
+					end
+					-- check for hits
+					local entity
+					for entity in all(entities) do
+						if entity.leader and entity.leader!=self.leader and contains_point(entity,troop.x,troop.y,1) then
+							-- check to see if anything is hitting the troop
+							if band(entity.hit_channel,2)>0 then -- troops
+								troop:die()
+							end
+							-- check to see if the troop is hitting anything
+							if band(1,entity.hurt_channel)>0 then -- buildings
+								troop:damage(1)
+								entity:damage(1)
+							end
+						end
+					end
+				end
+			end
+		end,
+		draw=function(self)
+			local colors=self.leader.colors
+			local troop
+			for troop in all(self.troops) do
+				if troop.delay<=0 then
+					pset2(troop.x,troop.y-troop.z,colors[4])
+					pset2(troop.x,troop.y-troop.z-1,colors[7])
+				end
+			end
+		end,
+		draw_shadow=function(self)
+			local troop
+			for troop in all(self.troops) do
+				if troop.delay<=0 then
+					pset2(troop.x-1-troop.z,troop.y,1)
+				end
+			end
+		end,
+		spawn_troop=function(self,building,delay)
+			local army=self
+			add(self.troops,{
+				x=building:center_x()+rnd(6)-3,
+				y=building:center_y()+rnd(5)-2,
+				z=0,
+				vz=1.8,
+				delay=delay,
+				health=6,
+				speed_mult=0.7+rnd(0.6),
+				damage=function(self,damage)
+					self.health-=damage
+					self.x-=rnd_int(2,3)*army.leader.facing_dir
+					if self.health<=0 then
+						self:die()
+					end
+				end,
+				die=function(self)
+					del(army.troops,self)
+				end
+			})
 		end
 	},
 	-- ui entities
@@ -595,7 +777,7 @@ local entity_classes={
 			rectfill2(x,y+6,17,2,2)
 			-- draw xp fill
 			if self.delayed_amount>0 then
-				rectfill2(x,y+6,max(1,flr(17*self.delayed_amount/self.max_amount)),2,14)
+				rectfill2(x,y+6,mid(1,flr(1+16*self.delayed_amount/self.max_amount),17),2,14)
 			end
 		end
 	},
@@ -657,6 +839,24 @@ local entity_classes={
 		end
 	},
 	level_up_notification={},
+	-- effects
+	pop_text={
+		render_layer=6,
+		frames_to_death=34,
+		vy=-1.2,
+		update=function(self)
+			self.vy+=0.07
+			self:apply_velocity()
+		end,
+		draw=function(self,x,y)
+			local sprite_width=fget(self.sprite)
+			local width=sprite_width+2+4*#self.text
+			-- draw the sprite
+			spr2(self.sprite,x+sprite_width-9-flr(width/2)+ternary(self.right_side_icon,4*#self.text+1,0),y-6)
+			-- draw the text
+			print2(self.text,x+ternary(self.right_side_icon,-1,sprite_width+1)-flr(width/2),y-4,self.color)
+		end
+	},
 	-- background entities
 	castle={
 		render_layer=1,
@@ -670,6 +870,7 @@ function _init()
 	buttons={{},{}}
 	button_presses={{},{}}
 	entities={}
+	balls={}
 	-- spawn entities
 	spawn_entity("castle",4,8)
 	spawn_entity("castle",96,8)
@@ -685,7 +886,9 @@ function _init()
 			is_facing_left=true
 		})
 	}
-	spawn_entity("ball",62,65)
+	leaders[1].opposing_leader=leaders[2]
+	leaders[2].opposing_leader=leaders[1]
+	add(balls,spawn_entity("ball",62,65))
 end
 
 function _update()
@@ -715,6 +918,17 @@ function _update()
 			if i!=j and entities[i]:is_hitting(entities[j]) then
 				entities[i]:on_hit(entities[j])
 				entities[j]:on_hurt(entities[i])
+			end
+		end
+	end
+	-- check for troop fights
+	local troop
+	for troop in all(leaders[1].army.troops) do
+		local troop2
+		for troop2 in all(leaders[2].army.troops) do
+			if troop.x>troop2.x-1 and troop.y==mid(troop2.y-4,troop.y,troop2.y+4) and troop.health>0 and troop2.health>0 then
+				troop:damage(1)
+				troop2:damage(1)
 			end
 		end
 	end
@@ -876,8 +1090,9 @@ function objects_overlapping(obj1,obj2)
 end
 
 -- checks to see if a point is contained within obj's bounding box
-function contains_point(obj,x,y)
-	return obj.x<x and x<obj.x+obj.width and obj.y<y and y<obj.y+obj.height
+function contains_point(obj,x,y,fudge)
+	fudge=fudge or 0
+	return obj.x-fudge<x and x<obj.x+obj.width+fudge and obj.y-fudge<y and y<obj.y+obj.height+fudge
 end
 
 -- returns the second argument if condition is truthy, otherwise returns the third argument
@@ -961,7 +1176,7 @@ __gfx__
 3e3e00000c0000c00000055555555555555555553333333355555555333333330000000033333330555500000011111000000000000000000000000002424200
 3e3e000cc0c000cc0000055555555555555555553333333355555555333333350000000033333330555500000111111004000000040000000400000022272420
 3e3e00cc0000000c0000055555555555555555553333333355555555333333350000000033333330555500000011111644400006444000064440000022777240
-333e0cc0c0000000c000055555555555555555553333333355555555333333330000000033333330555500000000111d4240000d4240000d4240000027771720
+333e0cc0c0000000c000055555555555555555553333333355555555333333330000000033333330555500000001111d4240000d4240000d4240000027771720
 003ec00000000000cc00055555555555555555553333333333333333333333330010000033333330555500000011111426409a9426409a9426409a9003333300
 003e0000000000000cc00555555555555555555533333333333333333333333500010000333333305555000000111112bbb1a9a2bbb1a9a2bbb1a9a00e1eee00
 003e0000000000000c0c05555555555555555555333b333333333333333333350010100033333330555500000011111666619a9666619a9666619a9000000000
@@ -1004,18 +1219,18 @@ bbbbb017777777777710044404440fff555555555555555555555555555555555555555555555555
 e0eee1111ffb100000553bb0003bbb3bb3bb03bb3bb0000000555555555555555555555555555555555555555555555000000000000000000000000000005d00
 555550001111000000553bbbbb03bbbb003bbbb03bbbbb03bb55555555555555555555555555555555555555555555500000000000000000000000000005d000
 3bb0003bbbbb3bb03bb3bbbbb3bb0000003bb03bb3bbbbb55555555555555555555555555555555555555555555555500000000000000000000000000005d00d
-3bb0003bb0003bb03bb3bb0003bb0000003bb03bb3bb3bb55555555555555555555555555555555555555555555555500000000000000000000600000005dddd
-3bb0003bb0003bb03bb3bb0003bb0000003bb03bb3bb3bb555555555555555555555555555555555555555555555555000000000000000000006000000c55dd0
-3bb0003bbb003bbb3bb3bbb003bb0000003bb03bb3bbbbb55555555555555555555555555555555555555555555555500000000000000000006d60000ccc0000
-3bb0003bb00003bbbb03bb0003bb0000003bbb3bb3bb00055555555555555555555555555555555555555555555555500ddd00000ddd00000d666d0555c00000
-3bbbbb3bbbbb003bb003bbbbb3bbbbb00003bbbb03bb0005555555555555555555555555555555555555555555555550dd6dd000dd6dd000dd666dd50d000000
-0003bb003bb3bbbb3bbbbbb3bbbb03bb03bb000055555555555555555555555555555555555555555555555555555550dd6dd00ddd6ddd006d666d655d000000
-0003bb003bb03bb0003bb03bb03bb3bb03bb000055555555555555555555555555555555555555555555555555555550d666d00dd666dd00666b666999909999
-0003bb003bb03bb0003bb03bb00003bb03bb00005555555555555555555555555555555555555555555555555555555066b6600d66b66d0066bbb669fff9fff9
-0003bb3b3bb03bb0003bb03bb00003bbbbbb0000555555555555555555555555555555555555555555555555555555506bbb60066bbb6600666b6dd9fff9fff9
-0003bbbbbbb03bb0003bb03bbb3bb3bb03bb00005555555555555555555555555555555555555555555555555555555066bdd00666b6660066666669fff9fff9
-00003bb3bb03bbbb003bb003bbbb03bb03bb0000555555555555555555555555555555555555555555555555555555506666600dd6666600dd666669fff9fff9
-00003bbbbbb3bb03bb3bbbb3bbbbb3bbbbb0000055555555555555555555555555555555555555555555555555555550661660066616660066616669fff9fff9
+3bb0003bb0003bb03bb3bb0003bb0000003bb03bb3bb3bb55555555555555555555555555555555555555555555555500000000000000000006000000005dddd
+3bb0003bb0003bb03bb3bb0003bb0000003bb03bb3bb3bb555555555555555555555555555555555555555555555555000000000000000000060000000c55dd0
+3bb0003bbb003bbb3bb3bbb003bb0000003bb03bb3bbbbb5555555555555555555555555555555555555555555555550000000000000000006d600000ccc0000
+3bb0003bb00003bbbb03bb0003bb0000003bbb3bb3bb00055555555555555555555555555555555555555555555555500ddd00000ddd0000d666d00555c00000
+3bbbbb3bbbbb003bb003bbbbb3bbbbb00003bbbb03bb0005555555555555555555555555555555555555555555555550dd6dd000dd6dd00dd666dd050d000000
+0003bb003bb3bbbb3bbbbbb3bbbb03bb03bb000055555555555555555555555555555555555555555555555555555550dd6dd00ddd6ddd06d666d6055d000000
+0003bb003bb03bb0003bb03bb03bb3bb03bb000055555555555555555555555555555555555555555555555555555550d666d00dd666dd0666b6660999909999
+0003bb003bb03bb0003bb03bb00003bb03bb00005555555555555555555555555555555555555555555555555555555066b6600d66b66d066bbb6609fff9fff9
+0003bb3b3bb03bb0003bb03bb00003bbbbbb0000555555555555555555555555555555555555555555555555555555506bbb60066bbb660666b6dd09fff9fff9
+0003bbbbbbb03bb0003bb03bbb3bb3bb03bb00005555555555555555555555555555555555555555555555555555555066bdd00666b6660666666609fff9fff9
+00003bb3bb03bbbb003bb003bbbb03bb03bb0000555555555555555555555555555555555555555555555555555555506666600dd666660dd6666609fff9fff9
+00003bbbbbb3bb03bb3bbbb3bbbbb3bbbbb0000055555555555555555555555555555555555555555555555555555550661660066616660666166609fff9fff9
 0000003bb003bb03bb03bb03bb0003bb000000005555555555555555555555555555555555555555555555555555555000000000000000000000000c99f9f99c
 0000003bb003bb03bb03bb03bb0003bb000000005555555555555555555555555555555555555555555555555555555000000000000000000000000cccc3cccc
 0000003bb003bbbbbb03bb03bbb003bbbb0000005555555555555555555555555555555555555555555555555555555555555555555555555555555000ccc000
@@ -1066,6 +1281,9 @@ e0eee1111ffb100000553bb0003bbb3bb3bb03bb3bb0000000555555555555555555555555555555
 00000000000044400000000000000000000000044400000000000000000000000044400000000000000000000000044400000000000055555555555555554567
 000000000004444400000000000000000000004444400000000000000000000004444400000000000000000000004444400000000000555555555555555589ab
 0000000000004440000000000000000000000004440000000000000000000000004440000000000000000000000004440000000000005555555555555555cdef
+__gff__
+0704040605000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
