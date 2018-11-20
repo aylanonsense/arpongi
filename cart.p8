@@ -4,17 +4,18 @@ __lua__
 
 --[[
 next steps:
-	level up rewards
 	effect when building is damaged
 	effect when building is destroyed
 	effect when building is triggered
-	effect when building is repaired
-	repairing buildings
-	game ends
-	game starts
+	archer triggers
+	game ends + resets
+	title screen
 	edges of paddle hit sharper
+	easier to shoot the ball straight
 	moving your paddle imparts momentum
-	consider adding druid
+	level up rewards
+	effect when building is repaired...?
+	repairing buildings...?
 
 title screen:
 	arpongi
@@ -48,6 +49,17 @@ hurt channels:
 -- useful no-op function
 function noop() end
 
+-- returns the second argument if condition is truthy, otherwise returns the third argument
+function ternary(condition,if_true,if_false)
+	return condition and if_true or if_false
+end
+
+-- debug
+local start_immediately=false
+local infinite_gold=false
+local infinite_xp=false
+local ball_damage_to_castle=4*12
+
 -- constants
 local controllers={1,0}
 local level_top=30
@@ -70,7 +82,7 @@ local leader_constants={
 	{
 		name="knight",
 		colors={2,8,8,8,14,14,15},
-		description={"command","loyal troops"}
+		description={"command","loyal armies"}
 	},
 	{
 		name="druid",
@@ -85,6 +97,9 @@ local fill_wipe={
 	0b1010010010100000.1,
 	0b0000010000000000.1
 }
+
+-- lifecycle vars
+local reset_game_at_end_of_frame=false
 
 -- effect vars
 local game_frames=0
@@ -120,6 +135,11 @@ local entity_classes={
 			self.gold=spawn_entity("gold_counter",ternary(left,44,78),10,props)
 			self.xp=spawn_entity("xp_counter",ternary(left,38,72),18,props)
 			self.level_up_notification=spawn_entity("level_up_notification",ternary(left,8,72),7,props)
+			if start_immediately then
+				self.health.hidden_frames=0
+				self.gold.hidden_frames=0
+				self.xp.hidden_frames=0
+			end
 			-- create menus
 			local menu_x=ternary(left,28,98)
 			self.main_menu=spawn_entity("menu",menu_x,66,{
@@ -248,7 +268,7 @@ local entity_classes={
 				self.vy=self.move_y
 				self:apply_velocity()
 				-- keep in bounds
-				self.y=mid(level_top-self.height/2+1,self.y,level_bottom-self.height/2-2)
+				self.y=mid(level_top-self.height/2+5,self.y,level_bottom-self.height/2-6)
 			end
 		end,
 		draw=function(self,x,y)
@@ -267,6 +287,16 @@ local entity_classes={
 			end
 			-- draw the leader
 			sspr2(14+5*self.sprite,47,5,6,x+ternary(self.is_facing_left,3,-6),self:center_y()-4,self.is_facing_left)
+		end,
+		game_end=function(self)
+			-- todo self.army
+			-- todo self.real_estate
+			-- todo create
+			-- todo self.text_box
+			-- todo self.health
+			self.gold.is_visible=false
+			self.xp.is_visible=false
+			-- todo self.level_up_notification
 		end,
 		draw_shadow=function(self,x,y)
 			rectfill2(self.x-1,self.y+2,self.width,self.height,1)
@@ -340,6 +370,8 @@ local entity_classes={
 			-- double trigger
 			-- steal gold
 			-- shadow ball
+			-- enemy ball triggers your buildings
+			-- crit triggers
 
 			-- juicy gameplay: fill board with multiballs
 
@@ -381,6 +413,8 @@ local entity_classes={
 		extends="leader",
 		sprite=4,
 		level_up=function(self,level)
+			-- farms create caravans
+
 			-- level 2: 
 			-- level 3: lvl 2 buildings unlocked
 			-- level 4: 
@@ -515,7 +549,60 @@ local entity_classes={
 		extends="building",
 		sprite=4,
 		visible_height={9,11,13},
-		upgrade_descriptions={{"wider range"},{"max range"}}
+		upgrade_descriptions={{"wider range"},{"max range"}},
+		shooty_frames=0,
+		shooty_range=20,
+		trigger=function(self)
+			self.shooty_frames=120
+			spawn_entity("shooty_circle",self:center_x(),self:center_y(),{
+				frames_to_death=self.shooty_frames,
+				radius=self.shooty_range
+			})
+		end,
+		update=function(self)
+			decrement_counter_prop(self,"show_health_bar_frames")
+			-- shoot arrows
+			decrement_counter_prop(self,"shooty_frames")
+			local frames_between_shots=5
+			if self.shooty_frames%frames_between_shots==frames_between_shots-1 then
+				local troops=self.leader.opposing_leader.army.troops
+				-- local i
+				-- for i=1,#troops do
+				-- 	local dist=find_distance(troops[i].x,troops[i].y,self:center_x(),self:center_y())
+				-- 	if dist<self.shooty_range then
+						local frames=50
+						local gravity=0.05
+						local height=10
+						spawn_entity("arrow",self:center_x(),self:center_y(),{
+							-- troop=troop
+							z=height,
+							frames_to_death=frames,
+							gravity=gravity,
+							vz=(get_triangle_num(frames)*gravity-height)/frames,
+							vx=-0.5,
+							vy=0
+						})
+				-- 		break
+				-- 	end
+				-- end
+			end
+		end
+	},
+	arrow={
+		update=function(self)
+			self.vz-=self.gravity
+			self.z+=self.vz
+			self:apply_velocity()
+		end,
+		draw=function(self,x,y)
+			pset(x,y-self.z,9)
+		end,
+		draw_shadow=function(self,x,y)
+			pset(x,y,1)
+		end,
+		on_death=function(self)
+			-- self.troop:damage(3)
+		end
 	},
 	church={
 		extends="building",
@@ -570,11 +657,18 @@ local entity_classes={
 				end
 				-- hit the leaders' goal areas
 				if self.x<level_left or self.x>level_right-self.width then
-					leader.health:decrease(12)
+					leader.health:decrease(ball_damage_to_castle)
 					self:die()
 					shake_and_freeze(13,2)
-					-- spawn a new ball
-					add(balls,spawn_entity("ball",62,64,{vx=-leader.facing_dir}))
+					if leader.health.amount<=0 then
+						-- end the game
+						spawn_entity("game_end",0,0,{loser=leader})
+						leaders[1]:game_end()
+						leaders[2]:game_end()
+					else
+						-- spawn a new ball
+						add(balls,spawn_entity("ball",62,64,{vx=-leader.facing_dir}))
+					end
 				end
 			end
 		end,
@@ -670,6 +764,7 @@ local entity_classes={
 		spawn_troop=function(self,building,delay)
 			local army=self
 			add(self.troops,{
+				is_alive=true,
 				x=building:center_x()+rnd(6)-3,
 				y=building:center_y()+rnd(5)-2,
 				z=0,
@@ -685,7 +780,10 @@ local entity_classes={
 					end
 				end,
 				die=function(self)
-					del(army.troops,self)
+					if self.is_alive then
+						self.is_alive=false
+						del(army.troops,self)
+					end
 				end
 			})
 		end
@@ -694,7 +792,7 @@ local entity_classes={
 	menu={
 		is_freeze_frame_immune=true,
 		render_layer=7,
-		-- is_visible=false,
+		is_visible=false,
 		-- highlighted_index=1,
 		update=function(self)
 			if self.is_visible then
@@ -719,31 +817,29 @@ local entity_classes={
 			end
 		end,
 		draw=function(self,x,y)
-			if self.is_visible then
-				local is_facing_left=self.leader.is_facing_left
-				local colors=self.leader.colors
-				-- draw each menu item
-				local menu_y=y-6*#self.items
-				local i
-				for i=1,#self.items do
-					local item_x,item_y=x-7,menu_y+12*i-13
-					-- draw the frame
-					pal(1,0)
-					sspr2(5,41,15,16,item_x,item_y)
-					-- apply the leader's colors
-					pal()
-					pal(3,colors[2])
-					pal(12,colors[3])
-					pal(11,colors[4])
-					pal(14,colors[5])
-					-- draw the icon
-					sspr2(119,9*self.items[i].sprite-9,9,9,item_x+3,item_y+3)
-				end
-				-- draw the hand
+			local is_facing_left=self.leader.is_facing_left
+			local colors=self.leader.colors
+			-- draw each menu item
+			local menu_y=y-6*#self.items
+			local i
+			for i=1,#self.items do
+				local item_x,item_y=x-7,menu_y+12*i-13
+				-- draw the frame
 				pal(1,0)
-				pal(11,colors[3])
-				sspr2(5,57,13,8,x+ternary(is_facing_left,7,-19),menu_y+12*self.highlighted_index-8,is_facing_left)
+				sspr2(5,41,15,16,item_x,item_y)
+				-- apply the leader's colors
+				pal()
+				pal(3,colors[2])
+				pal(12,colors[3])
+				pal(11,colors[4])
+				pal(14,colors[5])
+				-- draw the icon
+				sspr2(119,9*self.items[i].sprite-9,9,9,item_x+3,item_y+3)
 			end
+			-- draw the hand
+			pal(1,0)
+			pal(11,colors[3])
+			sspr2(5,57,13,8,x+ternary(is_facing_left,7,-19),menu_y+12*self.highlighted_index-8,is_facing_left)
 		end,
 		show=function(self)
 			self.is_visible=true
@@ -803,17 +899,15 @@ local entity_classes={
 	},
 	location_menu={
 		extends="menu",
-		--is_visible=false,
+		is_visible=false,
 		-- highlighted_index=1,
 		draw=function(self,x,y)
-			if self.is_visible then
-				local is_facing_left=self.leader.is_facing_left
-				local plot=self:get_highlighted_item()
-				-- draw the hand
-				pal(1,0)
-				pal(11,self.leader.colors[3])
-				sspr2(5,57,13,8,plot.x+ternary(is_facing_left,5,-17),plot.y-4,is_facing_left)
-			end
+			local is_facing_left=self.leader.is_facing_left
+			local plot=self:get_highlighted_item()
+			-- draw the hand
+			pal(1,0)
+			pal(11,self.leader.colors[3])
+			sspr2(5,57,13,8,plot.x+ternary(is_facing_left,5,-17),plot.y-4,is_facing_left)
 		end,
 		show=function(self)
 			-- find closest valid index, return true if there's a valid index
@@ -908,11 +1002,6 @@ local entity_classes={
 			end
 			self:on_update()
 		end,
-		draw=function(self,x,y)
-			if self.frames_alive>self.hidden_frames then
-				self:draw_counter(x,y)
-			end
-		end,
 		increase=function(self,amount)
 			self.amount=max(0,self.amount+amount)
 			if self.max_amount and self.amount>self.max_amount then
@@ -934,7 +1023,7 @@ local entity_classes={
 		min_tick=999,
 		max_tick=999,
 		hidden_frames=90,
-		draw_counter=function(self,x,y)
+		draw=function(self,x,y)
 			local amount,left=self.delayed_amount,self.leader.is_on_left_side
 			-- draw heart
 			spr2(0,x+ternary(left,0,46),y-3)
@@ -959,13 +1048,13 @@ local entity_classes={
 	},
 	gold_counter={
 		extends="counter",
-		amount=150,
-		delayed_amount=150,
+		amount=ternary(infinite_gold,990,80),
+		delayed_amount=80,
 		min_tick=7,
 		max_tick=12,
 		max_amount=990,
 		hidden_frames=45,
-		draw_counter=function(self,x,y)
+		draw=function(self,x,y)
 			-- draw coin
 			spr2(1,x-10,y-2)
 			-- draw gold amount
@@ -981,11 +1070,11 @@ local entity_classes={
 	},
 	xp_counter={
 		extends="counter",
-		amount=0,
+		amount=ternary(infinite_xp,999,0),
 		delayed_amount=0,
 		max_xp=40,
-		min_tick=2,
-		max_tick=2,
+		min_tick=ternary(infinite_xp,999,2),
+		max_tick=ternary(infinite_xp,999,2),
 		level=1,
 		hidden_frames=0,
 		on_update=function(self)
@@ -1007,7 +1096,7 @@ local entity_classes={
 				self.leader.level_up_notification:show(lines)
 			end
 		end,
-		draw_counter=function(self,x,y)
+		draw=function(self,x,y)
 			-- draw level
 			sspr2(11,33,11,3,x,y+1)
 			print2(self.level,x+14,y,14)
@@ -1027,7 +1116,7 @@ local entity_classes={
 	},
 	text_box={
 		render_layer=9,
-		-- is_visible=false,
+		is_visible=false,
 		-- title=nil,
 		-- description=nil,
 		-- gold=nil,
@@ -1038,38 +1127,36 @@ local entity_classes={
 			decrement_counter_prop(self,"description_warning_frames")
 		end,
 		draw=function(self,x,y)
-			if self.is_visible then
-				-- draw pane
-				pal(11,self.leader.colors[3])
-				rectfill2(x+5,y,53,23,7)
-				sspr2(0,40,5,23,x,y)
-				sspr2(0,40,5,23,x+58,y,true)
-				pal()
-				-- draw title and gold cost
-				if self.gold then
-					print2(self.title,x+7,y+2,0)
-					if self.gold_warning_frames%8>4 then
-						pal(9,8)
-					end
-					spr(2,x+35,y)
-					print2(self.gold,x+45,y+2,9)
-				-- draw title centered
-				else
-					print2_center(self.title,x+32,y+2,0)
+			-- draw pane
+			pal(11,self.leader.colors[3])
+			rectfill2(x+5,y,53,23,7)
+			sspr2(0,40,5,23,x,y)
+			sspr2(0,40,5,23,x+58,y,true)
+			pal()
+			-- draw title and gold cost
+			if self.gold then
+				print2(self.title,x+7,y+2,0)
+				if self.gold_warning_frames%8>4 then
+					pal(9,8)
 				end
-				local description=self.description
-				if description then
-					if self.description_warning_frames%8>4 then
-						pal(5,8)
-					end
-					-- draw two-line description
-					if #description>1 then
-						print2_center(description[1],x+32,y+10,5)
-						print2_center(description[2],x+32,y+16)
-					-- draw one-line description
-					else
-						print2_center(description[1],x+32,y+12,5)
-					end
+				spr(2,x+35,y)
+				print2(self.gold,x+45,y+2,9)
+			-- draw title centered
+			else
+				print2_center(self.title,x+32,y+2,0)
+			end
+			local description=self.description
+			if description then
+				if self.description_warning_frames%8>4 then
+					pal(5,8)
+				end
+				-- draw two-line description
+				if #description>1 then
+					print2_center(description[1],x+32,y+10,5)
+					print2_center(description[2],x+32,y+16)
+				-- draw one-line description
+				else
+					print2_center(description[1],x+32,y+12,5)
 				end
 			end
 		end,
@@ -1124,8 +1211,8 @@ local entity_classes={
 		render_layer=7,
 		init=function(self)
 			self.selects={
-				spawn_entity("leader_select",11,36,{player_num=1}),
-				spawn_entity("leader_select",77,36,{player_num=2,highlighted_index=3})
+				spawn_entity("leader_select",11,34,{player_num=1}),
+				spawn_entity("leader_select",77,34,{player_num=2,highlighted_index=3})
 			}
 		end,
 		update=function(self)
@@ -1133,14 +1220,8 @@ local entity_classes={
 			if self.frames_to_death<=0 and selects[1].is_selected and selects[2].is_selected then
 				selects[1]:lock()
 				selects[2]:lock()
-				self.frames_to_death=50
-				real_estates={
-					spawn_entity("real_estate",36),
-					spawn_entity("real_estate",90)
-				}
-				spawn_entity("start_game",0,0,{
-					leader_choices={self.selects[1].highlighted_index,self.selects[2].highlighted_index}
-				})
+				self.frames_to_death=45
+				start_game({self.selects[1].highlighted_index,self.selects[2].highlighted_index})
 			end
 		end,
 		draw=function(self)
@@ -1150,20 +1231,26 @@ local entity_classes={
 			end
 			rectfill2(0,0,127,128,bg_color)
 			fillp()
-			if self.frames_to_death<=0 then
-				print2_center("choose your character",64,18,6)
+			if self.frames_alive>=15 then
+				if self.frames_to_death<=0 then
+					-- title
+					sspr2(40,90,58,8,34,6)
+					-- leader select text
+					print2_center("choose your characters:",64,20,13)
+					-- the author
+					print2_center("created by bridgs",64,108,1)
+					print2_center("music by raphaelgoulart",64,114,1)
+					print2_center("and rafael langoni smith",64,120,1)
+				end
+				-- vs
+				print2_center("vs",64,62,13)
 			end
-			-- vs
-			print2_center("vs",64,64,6)
-			-- the author
-			-- print2_center("created by bridgs",64,106,5)
-			-- print2_center("(  bridgs_dev)",64,112,5)
-			-- spr2(68,38,110)
 		end
 	},
 	leader_select={
 		render_layer=8,
 		highlighted_index=1,
+		hidden_frames=15,
 		update=function(self)
 			if self.frames_to_death<=0 then
 				if self.is_selected then
@@ -1206,12 +1293,12 @@ local entity_classes={
 			sspr2(0,65+6*self.highlighted_index,40,6,x,y+12)
 		end,
 		lock=function(self)
-			self.frames_to_death=50
+			self.frames_to_death=45
 		end,
 		on_death=function(self)
-			spawn_entity("leader_spark",self.x+17,self.y+25,{
+			spawn_entity("shine",self.x+17,self.y+25,{
 				player_num=self.player_num,
-				vx=ternary(self.player_num==1,-0.56,0.56)
+				vx=ternary(self.player_num==1,-0.61,0.61)
 			})
 		end
 	},
@@ -1246,18 +1333,73 @@ local entity_classes={
 			sspr2(0,30,11,6,x,y)
 		end
 	},
-	leader_spark={
+	shine={
 		vy=-2,
-		frames_to_death=50,
+		frames_to_death=45,
 		update=function(self)
-			self.vy+=0.08
+			self.vy+=0.091
 			self:apply_velocity()
 		end,
 		draw=function(self,x,y)
 			sspr2(79,ternary(self.frames_alive%4<2,30,37),5,7,x,y)
 		end,
 		on_death=function(self)
-			-- spawn a leader?
+			spawn_entity("sparks",self.x+2,self.y+3)
+		end
+	},
+	sparks={
+		frames_to_death=18,
+		color=7,
+		gravity=0.02,
+		friction=0.1,
+		num_sparks=7,
+		speed=2,
+		angle=90,
+		angle_deviation=360,
+		variation=0.1,
+		delay=0,
+		init=function(self)
+			self.sparks={}
+			local i
+			local min_angle,max_angle=self.angle-self.angle_deviation/2,self.angle+self.angle_deviation/2
+			for i=1,self.num_sparks do
+				local angle=min_angle/360+(max_angle-min_angle)*((i-rnd())/self.num_sparks)/360
+				local speed=(1-self.variation+rnd(2*self.variation))*self.speed
+				add(self.sparks,{
+					x=self.x,
+					y=self.y,
+					vx=speed*cos(angle),
+					vy=speed*sin(angle)
+				})
+			end
+			self:update()
+		end,
+		update=function(self)
+			if self.frames_alive>=self.delay then
+				local spark
+				for spark in all(self.sparks) do
+					spark.prev_x,spark.prev_y=spark.x,spark.y
+					spark.vy+=self.gravity
+					spark.vx*=1-self.friction
+					spark.vy*=1-self.friction
+					spark.x+=spark.vx
+					spark.y+=spark.vy
+				end
+			end
+		end,
+		draw=function(self)
+			if self.frames_alive>=self.delay then
+				local spark
+				for spark in all(self.sparks) do
+					line(spark.x,spark.y,spark.prev_x,spark.prev_y,self.color)
+				end
+			end
+		end
+	},
+	shooty_circle={
+		render_layer=3.5,
+		draw=function(self)
+			circ(self.x,self.y,self.radius,8)
 		end
 	},
 	-- debris={
@@ -1285,7 +1427,9 @@ local entity_classes={
 			local colors=self.leader.colors
 			local health=self.leader.health.delayed_amount
 			local sprite
-			if health>26 then
+			if self.is_destroyed then
+				sprite=3
+			elseif health>26 then
 				sprite=0
 			elseif health>12 then
 				sprite=1
@@ -1306,8 +1450,7 @@ local entity_classes={
 		end
 	},
 	-- life cycle
-	start_game={
-		frames_to_death=100,
+	game_start={
 		on_death=function(self)
 			local i
 			for i=1,2 do
@@ -1321,10 +1464,53 @@ local entity_classes={
 					is_facing_left=not is_on_left_side
 				}))
 			end
+			leaders[1].opposing_leader=leaders[2]
+			leaders[2].opposing_leader=leaders[1]
 			add(balls,spawn_entity("ball",62,64,{
 				vx=ternary(rnd()<0.5,-1,1),
-				spawn_frames=180
+				spawn_frames=ternary(start_immediately,1,180)
 			}))
+		end
+	},
+	game_end={
+		frames_to_death=250,
+		render_layer=10,
+		update=function(self)
+			local castle=self.loser.castle
+			if self.frames_alive==90 then
+				castle.is_destroyed=true
+				spawn_entity("sparks",castle.x+14,castle.y+10,{
+					color=7,
+					num_sparks=60,
+					frames_to_death=200,
+					friction=0,
+					variation=0.9
+				})
+				shake_and_freeze(15,2)
+			end
+			if self.frames_alive<=85 and self.frames_alive%5==0 then
+				spawn_entity("poof",castle.x+rnd_int(0,16),castle.y+rnd_int(0,13))
+				shake_and_freeze(2)
+			end
+		end,
+		draw=function(self)
+			-- draw win/lose text
+			if self.frames_alive>=90 then
+				pal(3,leaders[1].colors[1])
+				pal(11,leaders[1].colors[4])
+				sspr2(20,ternary(leaders[1]==self.loser,59,53),30,6,32,17)
+				pal(3,leaders[2].colors[1])
+				pal(11,leaders[2].colors[4])
+				sspr2(20,ternary(leaders[2]==self.loser,59,53),30,6,65,17)
+			end
+			-- fade out the screen
+			if self.frames_to_death<=15 then
+				fillp(fill_wipe[mid(1,6-ceil(self.frames_to_death/3),5)])
+				rectfill2(0,0,127,128,bg_color)
+			end
+		end,
+		on_death=function(self)
+			reset_game_at_end_of_frame=true
 		end
 	}
 }
@@ -1332,25 +1518,7 @@ local entity_classes={
 function _init()
 	buttons={{},{}}
 	button_presses={{},{}}
-	entities={}
-	balls={}
-	real_estates={}
-	-- spawn entities
-	leaders={}-- {
-		-- spawn_entity("witch",6,59,{
-		-- 	player_num=1,
-		-- 	facing_dir=1,
-		-- 	is_on_left_side=true
-		-- }),
-		-- spawn_entity("knight",119,59,{
-		-- 	player_num=2,
-		-- 	facing_dir=-1,
-		-- 	is_facing_left=true
-		-- })
-	-- }
-	-- leaders[1].opposing_leader=leaders[2]
-	-- leaders[2].opposing_leader=leaders[1]
-	spawn_entity("leader_select_screen")
+	reset_game()
 end
 
 function _update()
@@ -1413,6 +1581,11 @@ function _update()
 			del(entities,entity)
 		end
 	end
+	-- reset the game
+	if reset_game_at_end_of_frame then
+		reset_game_at_end_of_frame=false
+		reset_game()
+	end
 	-- sort entities for rendering
 	sort_list(entities,is_rendered_on_top_of)
 end
@@ -1433,13 +1606,18 @@ function _draw()
 	-- draw all of the entities' shadows
 	local entity
 	for entity in all(entities) do
-		entity:draw_shadow(entity.x,entity.y)
-		pal()
+		if entity.is_visible and entity.frames_alive>=entity.hidden_frames then
+			entity:draw_shadow(entity.x,entity.y)
+			pal()
+		end
 	end
 	-- draw all of the entities
 	for entity in all(entities) do
-		entity:draw(entity.x,entity.y)
-		pal()
+		if entity.is_visible and entity.frames_alive>=entity.hidden_frames then
+			entity:draw(entity.x,entity.y)
+			pal()
+			fillp()
+		end
 	end
 end
 
@@ -1468,6 +1646,8 @@ function spawn_entity(class_name,x,y,args,skip_init)
 			hurt_channel=0,
 			-- render vars
 			render_layer=5,
+			is_visible=true,
+			hidden_frames=0,
 			-- functions
 			init=noop,
 			update=function(self)
@@ -1541,6 +1721,30 @@ function btnp2(button_num,player_num,consume_press)
 	end
 end
 
+function start_game(leader_choices)
+	real_estates={
+		spawn_entity("real_estate",36),
+		spawn_entity("real_estate",90)
+	}
+	spawn_entity("game_start",0,0,{
+		frames_to_death=ternary(start_immediately,1,90),
+		leader_choices=leader_choices
+	})
+end
+
+function reset_game()
+	entities={}
+	balls={}
+	real_estates={}
+	-- spawn entities
+	leaders={}
+	if start_immediately then
+		start_game({3,2})
+	else
+		spawn_entity("leader_select_screen")
+	end
+end
+
 -- bubble sorts a list
 function sort_list(list,func)
 	local i
@@ -1579,11 +1783,6 @@ function contains_point(obj,x,y,fudge)
 	return obj.x-fudge<x and x<obj.x+obj.width+fudge and obj.y-fudge<y and y<obj.y+obj.height+fudge
 end
 
--- returns the second argument if condition is truthy, otherwise returns the third argument
-function ternary(condition,if_true,if_false)
-	return condition and if_true or if_false
-end
-
 -- increment a counter, wrapping to 20000 if it risks overflowing
 function increment_counter(n)
 	return ternary(n>32000,20000,n+1)
@@ -1609,6 +1808,23 @@ end
 -- generates a random integer between min_val and max_val, inclusive
 function rnd_int(min_val,max_val)
 	return flr(min_val+rnd(1+max_val-min_val))
+end
+
+-- gets the nth number of the triangle sequence
+function get_triangle_num(n)
+	local sum=0
+	local i
+	for i=1,n do
+		sum+=i
+	end
+	return sum
+end
+
+-- finds the distance between two points
+function find_distance(x1,y1,x2,y2)
+	local dx=mid(-100,x2-x1,100)
+	local dy=mid(-100,y2-y1,100)
+	return sqrt(dx*dx+dy*dy),dx,dy
 end
 
 -- wrappers for drawing functions
@@ -1725,16 +1941,16 @@ e0eee1111ff9100000553bb0003bbb3bb3bb03bb3bb0000000555555555555555555555555555555
 3bb3bb3bb3b3bb03bb03bb00003bb03bb003bb005cccccd8cc5665009494429aaaa0d6228777766200bbab3bb9943bb0555555555555555555555550089aa998
 3bbbb03bb3b3bb03bb03bb3bbb3bbbbbb003bb005544dd89d94115002f444499aaa026277766688000baabbbb9999bb35555555555555500000000000899aaa9
 3bb3bb3bb03bbb03bb03bbb3bb3bb03bb003bb00cc441899844c5170f294449a9a00ff676688880000bbbbbbb3499b33555555555555550000d00000089aaaa9
-3bb3bb3bb003bb3bbbb03bbbb03bb03bb003bb00dd4918aa849dd179222992222200ffd628882200003bbbbb3343333055555555555555000ddd00000089aaa9
-0003bbbbb03bbbbb03bb03bb3bbbb3bbbbb0000011d491891441117661111994410099466111100000033331142111005555555555555500ddddd00080089990
-0003bb03bb3bb03bb3bb03bb03bb03bb03bb00000588888805888888805888cccc005cccccc05cccccaa005aaaaaa05aaa5555555555550ddddddd00030d0000
-0003bb03bb3bb03bb3bb03bb03bb03bb03bb0000588805888588805888588c05ccc5ccc05ccc5ccc05aaa5aaa05aaa5aaa555555555555ddddddddd000ddd030
-0003bb03bb3bbbbb03bb03bb03bb03bb03bb000058880588858880588858cc05ccc5ccc05ccc5ccc05aaa5aaa05aaa000055555555555577777777700c22cbb0
-0003bbb3bb3bb03bb3bbb3bb03bb03bbb3bb00005888058885888000005ccc05ccc5ccc05ccc5cca05aaa5aaa05aaa5aaa555555555555577777775044aa3bb0
-0003bbbbb03bb03bb03bbbb03bbbb3bbbbb000005888058885888000005ccc05ccc5ccc05ccc5caa05aaa5aaa05aaa5aaa5555555555550577777500089aabb0
-55555555555555555555555555555555555555555888058885888000005ccccccc05ccc05ccc5aaa05aaa05aaaaaaa5aaa55555555555500577750008889a990
-55555555555555555555555555555555555555555888588885888000005ccc000005ccc05ccc5aaa05aaa000005aaa5aaa555555555555000575000228eea994
-55555555555555555555555555555555555555550588885885888000005ccc0000005cccccc05aaa05aaa05aaaaaa05aaa555555555555000050000244eec444
+3bb3bb3bb003bb3bbbb03bbbb03bb03bb003bb00dd4918aa849dd179222992222200ffda28882200003bbbbb3343333055555555555555000ddd00000089aaa9
+0003bbbbb03bbbbb03bb03bb3bbbb3bbbbb0000011d491891441117aa11119944100994aa111100000033331142111005555555555555500ddddd00080089990
+0003bb03bb3bb03bb3bb03bb03bb03bb03bb000001cccccc01ccccccc01ccccccc001cccccc01ccccccc001cccccc01ccc5555555555550ddddddd00030d0000
+0003bb03bb3bb03bb3bb03bb03bb03bb03bb00001ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc1ccc555555555555ddddddddd000ddd030
+0003bb03bb3bbbbb03bb03bb03bb03bb03bb00001ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc1ccc01ccc000055555555555577777777700c22cbb0
+0003bbb3bb3bb03bb3bbb3bb03bb03bbb3bb00001ccc01ccc1ccc000001ccc01ccc1ccc01ccc1ccc01ccc1ccc000001ccc555555555555577777775044aa3bb0
+0003bbbbb03bb03bb03bbbb03bbbb3bbbbb000002eee02eee2eee000002eee02eee2eee02eee2eee02eee2eee2eeee2eee5555555555550577777500089aabb0
+55555555555555555555555555555555555555552eee02eee2eee000002eeeeeee02eee02eee2eee02eee2eee02eee2eee55555555555500577750008889a990
+55555555555555555555555555555555555555552eee2eeee2eee000002eee000002eee02eee2eee02eee2eee02eee2eee555555555555000575000228eea994
+55555555555555555555555555555555555555550499994994999000004999000000499999904999049990499999904999555555555555000050000244eec444
 00000000000005000000000000000000000000005000000000000000000000000005000000000000000000000000000000000000000055000000000022444440
 00000000000005000000000000000000000000005000000000000000000000000005000000000000000000000000000000000000000055ddddddddd00cc6c000
 00000000000015d00000000000000000000000015d00000000000000000000000015d000000000000000000000000000000000000000550ddddddd000ccc0000
