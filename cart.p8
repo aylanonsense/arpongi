@@ -4,10 +4,6 @@ __lua__
 
 --[[
 next steps:
-	effect when building is damaged
-	effect when building is destroyed
-	effect when building is triggered
-	archer triggers
 	level up rewards
 	2nd player color
 	sound effects
@@ -195,8 +191,8 @@ local entity_classes={
 								plot=plot
 							})
 							plot.building=building
-							spawn_entity("poof",plot.x-6,plot.y-8)
-							spawn_entity("building_halo",building.x-2,building.y-building.visible_height[1+building.upgrades]+2)
+							spawn_entity("poof",plot.x-5,plot.y-8)
+							spawn_entity("building_halo",building.x-1,building.y-building.visible_height[1+building.upgrades]+2)
 							-- close the menu
 							self:hide()
 							leader.text_box:hide()
@@ -415,8 +411,8 @@ local entity_classes={
 	},
 	-- buildings
 	building={
-		width=7,
-		height=8,
+		width=9,
+		height=10,
 		hurt_channel=1, -- buildings
 		upgrades=0,
 		shadow_y_offset=3,
@@ -433,16 +429,16 @@ local entity_classes={
 			pal(11,colors[4])
 			pal(14,colors[5])
 			-- draw the building
-			sspr2(95+8*self.upgrades,16*self.sprite-16,8,16,x,y-7)
+			sspr2(95+8*self.upgrades,16*self.sprite-16,8,16,x+1,y-7)
 			-- draw the building's health bar
 			if self.show_health_bar_frames>0 then
 				local health_bar_y=y+4-self.visible_height[self.upgrades+1]
-				rectfill2(x,health_bar_y,7,2,2)
-				rectfill2(x,health_bar_y,mid(1,flr(1+6*self.health/self.max_health),7),2,8)
+				rectfill2(x+1,health_bar_y,7,2,2)
+				rectfill2(x+1,health_bar_y,mid(1,flr(1+6*self.health/self.max_health),7),2,8)
 			end
 		end,
 		draw_shadow=function(self,x,y)
-			sspr2(84,12*self.sprite+4*self.upgrades-12,11,4,x-9,y+self.shadow_y_offset)
+			sspr2(84,12*self.sprite+4*self.upgrades-12,11,4,x-8,y+self.shadow_y_offset)
 		end,
 		on_hurt=function(self,other)
 			if other.last_hit_building!=self then
@@ -450,9 +446,17 @@ local entity_classes={
 				-- trigger from a ball with the same leader
 				if self.leader==other.leader then
 					self:trigger(other)
+					spawn_entity("building_halo",self.x-1,self.y-self.visible_height[1+self.upgrades]+2)
 				-- take damage from a ball from another leader
 				elseif other.leader then
 					self:damage(other.damage)
+					spawn_entity("sparks",self:center_x(),self:center_y(),{
+						num_sparks=3,
+						color=6,
+						angle_deviation=60,
+						variation=0.3,
+						gravity=0.08
+					})
 				end
 			end
 		end,
@@ -552,7 +556,7 @@ local entity_classes={
 			decrement_counter_prop(self,"show_health_bar_frames")
 			-- shoot arrows
 			decrement_counter_prop(self,"shooty_frames")
-			local shooty_range=self.shooty_range[1+self.upgrades]
+			local shooty_range=self.shooty_range[1+self.upgrades]+2
 			local frames_between_shots=self.frames_between_shots[1+self.upgrades]
 			if self.shooty_frames%frames_between_shots==frames_between_shots-1 then
 				local troops=self.leader.opposing_leader.army.troops
@@ -566,9 +570,6 @@ local entity_classes={
 					end
 				end
 				-- shoot an arrow
-				local frames=50
-				local gravity=0.05
-				local height=5
 				local angle=rnd()
 				local arrow_dist=shooty_range*(0.5+0.5*rnd())
 				local target_x=self:center_x()+arrow_dist*cos(angle)
@@ -582,17 +583,17 @@ local entity_classes={
 				end
 				spawn_entity("arrow",self:center_x(),self:center_y(),{
 					troop=troop,
-					z=height,
-					frames_to_death=frames,
-					gravity=gravity,
-					vz=(get_triangle_num(frames)*gravity-height)/frames,
-					vx=(target_x-self:center_x())/frames,
-					vy=(target_y-self:center_y())/frames
+					vz=1.175,
+					vx=(target_x-self:center_x())/50,
+					vy=(target_y-self:center_y())/50
 				})
 			end
 		end
 	},
 	arrow={
+		z=5,
+		frames_to_death=50,
+		gravity=0.05,
 		update=function(self)
 			self.vz-=self.gravity
 			self.z+=self.vz
@@ -700,10 +701,10 @@ local entity_classes={
 		end,
 		normalize_and_increase_speed=function(self)
 			self.speed_level+=1
-			local currSpeed=sqrt(self.vx*self.vx+self.vy*self.vy)
+			local currspeed=sqrt(self.vx*self.vx+self.vy*self.vy)
 			local speed=0.75+0.04*self.speed_level
-			self.vx*=speed/currSpeed
-			self.vy*=speed/currSpeed
+			self.vx*=speed/currspeed
+			self.vy*=speed/currspeed
 		end
 	},
 	army={
@@ -798,6 +799,14 @@ local entity_classes={
 					if self.is_alive then
 						self.is_alive=false
 						del(army.troops,self)
+						shake_and_freeze(1)
+						spawn_entity("sparks",self.x,self.y,{
+							color=army.leader.colors[4],
+							speed=1.5,
+							num_sparks=2,
+							angle_deviation=30,
+							variation=0.3
+						})
 					end
 				end
 			})
@@ -1481,7 +1490,7 @@ local entity_classes={
 			end
 			leaders[1].opposing_leader=leaders[2]
 			leaders[2].opposing_leader=leaders[1]
-			add(balls,spawn_entity("ball",62,64,{
+			add(balls,spawn_entity("ball",62,65,{
 				vx=ternary(rnd()<0.5,-0.75,0.75),
 				spawn_frames=ternary(start_immediately,1,180)
 			}))
@@ -1823,16 +1832,6 @@ end
 -- generates a random integer between min_val and max_val, inclusive
 function rnd_int(min_val,max_val)
 	return flr(min_val+rnd(1+max_val-min_val))
-end
-
--- gets the nth number of the triangle sequence
-function get_triangle_num(n)
-	local sum=0
-	local i
-	for i=1,n do
-		sum+=i
-	end
-	return sum
 end
 
 -- finds the distance between two points
