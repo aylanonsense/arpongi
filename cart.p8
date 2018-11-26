@@ -8,26 +8,8 @@ next steps:
 	effect when building is destroyed
 	effect when building is triggered
 	archer triggers
-	game ends + resets
-	title screen
-	edges of paddle hit sharper
-	easier to shoot the ball straight
-	moving your paddle imparts momentum
 	level up rewards
-	effect when building is repaired...?
-	repairing buildings...?
-
-title screen:
-	arpongi
-	2-player competitive
-	created by bridgs
-	(bridgs_dev)
-	music by x & x
-	press any button to continue
-
-character select:
-	choose your characters
-	select1 / select 2
+	2nd player color
 
 render layers:
 	1:	far background
@@ -55,10 +37,10 @@ function ternary(condition,if_true,if_false)
 end
 
 -- debug
-local start_immediately=false
+local start_immediately=true
 local infinite_gold=false
 local infinite_xp=false
-local ball_damage_to_castle=4*12
+local ball_damage_to_castle=0--4*12
 
 -- constants
 local controllers={1,0}
@@ -147,7 +129,7 @@ local entity_classes={
 				items={
 					{sprite=6,title="build",description={"construct new","buildings"}},
 					{sprite=7,title="upgrade",description={"improve your","buildings"}},
-					{sprite=8,title="repair",description={"recover damage","to buildings"}},
+					-- {sprite=8,title="repair",description={"recover damage","to buildings"}},
 					{sprite=9,title="magic",description={"cast great","spells"}}
 				},
 				on_select=function(self,item)
@@ -310,6 +292,11 @@ local entity_classes={
 			-- adjust ball velocity based on line from center of leader to center of ball
 			ball.vx=dx/dist
 			ball.vy=dy/dist
+			if ball.vy==mid(-0.18,ball.vy,0.18) then
+				ball.vy/=2
+			end
+			ball.vy+=self.vy/3.5
+			ball:normalize_and_increase_speed()
 			-- gain gold and xp
 			local pop_x=self.x+ternary(self.is_on_left_side,4,1)
 			local y=self.y
@@ -624,6 +611,7 @@ local entity_classes={
 		damage=20,
 		render_layer=6,
 		spawn_frames=74,
+		speed_level=0,
 		-- last_hit_building=nil,
 		update=function(self)
 			if self.frames_alive>self.spawn_frames then
@@ -633,7 +621,8 @@ local entity_classes={
 				-- bounce off the leaders' paddles
 				local leader=leaders[ternary(self.vx<0,1,2)]
 				local paddle_x=leader.x+ternary(leader.is_facing_left,-self.width,leader.width)
-				if (prev_x<paddle_x)!=(self.x<paddle_x) then
+				local fudge=ternary(leader.is_facing_left,2.5,-2.5)
+				if (prev_x<paddle_x)!=(self.x<paddle_x) or (prev_x<paddle_x+fudge)!=(self.x<paddle_x+fudge) then
 					local percent_velocity_applied=(paddle_x-prev_x)/(self.x-prev_x)
 					local collide_y=prev_y+percent_velocity_applied*self.vy
 					if collide_y==mid(leader.y-self.height,collide_y,leader.y+leader.height) then
@@ -667,7 +656,7 @@ local entity_classes={
 						leaders[2]:game_end()
 					else
 						-- spawn a new ball
-						add(balls,spawn_entity("ball",62,64,{vx=-leader.facing_dir}))
+						add(balls,spawn_entity("ball",62,64,{vx=-0.75*leader.facing_dir}))
 					end
 				end
 			end
@@ -689,6 +678,13 @@ local entity_classes={
 		end,
 		on_death=function(self)
 			del(balls,self)
+		end,
+		normalize_and_increase_speed=function(self)
+			self.speed_level+=1
+			local currSpeed=sqrt(self.vx*self.vx+self.vy*self.vy)
+			local speed=0.75+0.04*self.speed_level
+			self.vx*=speed/currSpeed
+			self.vy*=speed/currSpeed
 		end
 	},
 	army={
@@ -942,8 +938,8 @@ local entity_classes={
 					end
 					self.leader.text_box:show("upgrade",description,cost)
 				-- show repair text
-				elseif self.action=="repair" then
-					self.leader.text_box:show("repair",{"120 / 150","hit points"},30)
+				-- elseif self.action=="repair" then
+				-- 	self.leader.text_box:show("repair",{"120 / 150","hit points"},30)
 				end
 			end
 		end,
@@ -1467,7 +1463,7 @@ local entity_classes={
 			leaders[1].opposing_leader=leaders[2]
 			leaders[2].opposing_leader=leaders[1]
 			add(balls,spawn_entity("ball",62,64,{
-				vx=ternary(rnd()<0.5,-1,1),
+				vx=ternary(rnd()<0.5,-0.75,0.75),
 				spawn_frames=ternary(start_immediately,1,180)
 			}))
 		end
