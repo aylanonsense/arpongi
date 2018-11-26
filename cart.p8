@@ -10,6 +10,7 @@ next steps:
 	archer triggers
 	level up rewards
 	2nd player color
+	sound effects
 
 render layers:
 	1:	far background
@@ -38,8 +39,8 @@ end
 
 -- debug
 local start_immediately=true
-local infinite_gold=false
-local infinite_xp=false
+local infinite_gold=true
+local infinite_xp=true
 local ball_damage_to_castle=0--4*12
 
 -- constants
@@ -538,40 +539,56 @@ local entity_classes={
 		visible_height={9,11,13},
 		upgrade_descriptions={{"wider range"},{"max range"}},
 		shooty_frames=0,
-		shooty_range=20,
+		shooty_range={21,26,33},
+		frames_between_shots={25,15,7},
 		trigger=function(self)
-			self.shooty_frames=120
+			self.shooty_frames=170
 			spawn_entity("shooty_circle",self:center_x(),self:center_y(),{
 				frames_to_death=self.shooty_frames,
-				radius=self.shooty_range
+				radius=self.shooty_range[1+self.upgrades]
 			})
 		end,
 		update=function(self)
 			decrement_counter_prop(self,"show_health_bar_frames")
 			-- shoot arrows
 			decrement_counter_prop(self,"shooty_frames")
-			local frames_between_shots=5
+			local shooty_range=self.shooty_range[1+self.upgrades]
+			local frames_between_shots=self.frames_between_shots[1+self.upgrades]
 			if self.shooty_frames%frames_between_shots==frames_between_shots-1 then
 				local troops=self.leader.opposing_leader.army.troops
-				-- local i
-				-- for i=1,#troops do
-				-- 	local dist=find_distance(troops[i].x,troops[i].y,self:center_x(),self:center_y())
-				-- 	if dist<self.shooty_range then
-						local frames=50
-						local gravity=0.05
-						local height=10
-						spawn_entity("arrow",self:center_x(),self:center_y(),{
-							-- troop=troop
-							z=height,
-							frames_to_death=frames,
-							gravity=gravity,
-							vz=(get_triangle_num(frames)*gravity-height)/frames,
-							vx=-0.5,
-							vy=0
-						})
-				-- 		break
-				-- 	end
-				-- end
+				local possible_troops={}
+				-- find a nearby troop
+				local i
+				for i=1,#troops do
+					local dist=find_distance(troops[i].x,troops[i].y,self:center_x(),self:center_y())
+					if dist<shooty_range then
+						add(possible_troops,troops[i])
+					end
+				end
+				-- shoot an arrow
+				local frames=50
+				local gravity=0.05
+				local height=5
+				local angle=rnd()
+				local arrow_dist=shooty_range*(0.5+0.5*rnd())
+				local target_x=self:center_x()+arrow_dist*cos(angle)
+				local target_y=self:center_y()+arrow_dist*sin(angle)
+				-- shoot at a troop if possible
+				local troop
+				if #possible_troops>0 then
+					troop=possible_troops[rnd_int(1,#possible_troops)]
+					target_x=troop.x-5*self.leader.facing_dir
+					target_y=troop.y
+				end
+				spawn_entity("arrow",self:center_x(),self:center_y(),{
+					troop=troop,
+					z=height,
+					frames_to_death=frames,
+					gravity=gravity,
+					vz=(get_triangle_num(frames)*gravity-height)/frames,
+					vx=(target_x-self:center_x())/frames,
+					vy=(target_y-self:center_y())/frames
+				})
 			end
 		end
 	},
@@ -588,7 +605,9 @@ local entity_classes={
 			pset(x,y,1)
 		end,
 		on_death=function(self)
-			-- self.troop:damage(3)
+			if self.troop then
+				self.troop:damage(6)
+			end
 		end
 	},
 	church={
